@@ -1,0 +1,1 @@
+import "./globals.css"; export const metadata={title:"Singhagiri Spin & Win"}; export default function RootLayout({children}:{children:React.ReactNode}){return <>{children}</>}

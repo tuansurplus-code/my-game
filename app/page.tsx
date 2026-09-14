@@ -1,0 +1,1 @@
+import SpinGame from "../components/SpinGame"; export default function Home(){return <main className="page"><header><b>SINGHAGIRI</b><span>SPIN & WIN</span><a href="/admin/login">Admin</a></header><section><small>SINGHAGIRI ONLINE</small><h1>Spin & Win</h1><p>Spin the wheel and discover your exclusive reward.</p><SpinGame/></section></main>}
