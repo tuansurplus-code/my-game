@@ -103,10 +103,18 @@ export default function SpinGame() {
   function formatMobile(value: string) {
     const clean = value.replace(/\D/g, "");
 
-    if (clean.length <= 3) return clean;
-    if (clean.length <= 6) return `${clean.slice(0, 3)} ${clean.slice(3)}`;
+    if (clean.length <= 3) {
+      return clean;
+    }
 
-    return `${clean.slice(0, 3)} ${clean.slice(3, 6)} ${clean.slice(6, 10)}`;
+    if (clean.length <= 6) {
+      return `${clean.slice(0, 3)} ${clean.slice(3)}`;
+    }
+
+    return `${clean.slice(0, 3)} ${clean.slice(3, 6)} ${clean.slice(
+      6,
+      10
+    )}`;
   }
 
   async function spin() {
@@ -176,7 +184,7 @@ export default function SpinGame() {
       winnerIndex * segmentAngle + segmentAngle / 2;
 
     /*
-      Several complete rotations first,
+      Spin several full rotations first,
       then position the winning segment
       underneath the pointer.
     */
@@ -202,7 +210,9 @@ export default function SpinGame() {
   }
 
   async function copyCoupon() {
-    if (!winner?.coupon_code) return;
+    if (!winner?.coupon_code) {
+      return;
+    }
 
     try {
       await navigator.clipboard.writeText(
@@ -222,39 +232,7 @@ export default function SpinGame() {
   return (
     <div className="spin-section">
 
-      {/* TOP BRANDING */}
-      <div className="game-brand">
-        <div className="brand-mark">
-          S
-        </div>
-
-        <div>
-          <div className="brand-name">
-            SINGHAGIRI
-          </div>
-
-          <div className="brand-subtitle">
-            ONLINE
-          </div>
-        </div>
-      </div>
-
-      <div className="game-heading">
-        <div className="limited-badge">
-          EXCLUSIVE ONLINE OFFER
-        </div>
-
-        <h2>
-          SPIN & WIN
-        </h2>
-
-        <p>
-          Spin the wheel and discover your
-          exclusive Singhagiri reward!
-        </p>
-      </div>
-
-      {/* WHEEL */}
+      {/* WHEEL HERO */}
       <div className="wheel-container">
 
         <div className="pointer">
@@ -282,6 +260,7 @@ export default function SpinGame() {
               viewBox="0 0 400 400"
               className="wheel-svg"
             >
+
               {prizes.map((prize, index) => {
                 const total = prizes.length;
 
@@ -303,7 +282,9 @@ export default function SpinGame() {
                         total,
                         190
                       )}
-                      className={`wheel-segment segment-${index % 6}`}
+                      className={`wheel-segment segment-${
+                        index % 6
+                      }`}
                     />
 
                     <g
@@ -335,7 +316,7 @@ export default function SpinGame() {
                 className="wheel-border"
               />
 
-              {/* CENTER */}
+              {/* CENTER BUTTON */}
               <circle
                 cx="200"
                 cy="200"
@@ -365,18 +346,19 @@ export default function SpinGame() {
                 textAnchor="middle"
                 className="spin-center-sub"
               >
-                & WIN
+                &amp; WIN
               </text>
 
             </svg>
           )}
+
         </div>
 
         <div className="wheel-glow"></div>
 
       </div>
 
-      {/* FORM */}
+      {/* MOBILE ENTRY */}
       <div className="entry-card">
 
         <label>
@@ -422,7 +404,7 @@ export default function SpinGame() {
 
       </div>
 
-      {/* ERROR */}
+      {/* ERROR MESSAGE */}
       {message && (
         <div className="error-message">
           <span>!</span>
@@ -436,7 +418,9 @@ export default function SpinGame() {
 
           <div className="winner-modal">
 
-            <div className="confetti">🎉</div>
+            <div className="confetti">
+              🎉
+            </div>
 
             <div className="winner-small">
               CONGRATULATIONS!
@@ -497,96 +481,28 @@ export default function SpinGame() {
 
       <style jsx>{`
 
+        /* =========================
+           MAIN GAME SECTION
+        ========================= */
+
         .spin-section {
           width: 100%;
-          max-width: 680px;
-          margin: 35px auto;
-          padding: 35px 25px 30px;
-          border-radius: 28px;
-          background: linear-gradient(
-            145deg,
-            #ffffff 0%,
-            #f8f8f8 100%
-          );
-          box-shadow:
-            0 20px 60px rgba(0,0,0,.12),
-            0 3px 10px rgba(0,0,0,.06);
+          max-width: 620px;
+          margin: 20px auto 35px;
+          padding: 10px 20px 30px;
           box-sizing: border-box;
-          overflow: hidden;
         }
 
-        .game-brand {
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          gap: 10px;
-          margin-bottom: 18px;
-        }
 
-        .brand-mark {
-          width: 42px;
-          height: 42px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 10px;
-          background: #e31b23;
-          color: white;
-          font-size: 25px;
-          font-weight: 900;
-          font-family: Arial, sans-serif;
-        }
-
-        .brand-name {
-          font-size: 21px;
-          line-height: 20px;
-          font-weight: 900;
-          letter-spacing: 1px;
-        }
-
-        .brand-subtitle {
-          font-size: 9px;
-          font-weight: 700;
-          letter-spacing: 3px;
-          color: #e31b23;
-        }
-
-        .game-heading {
-          text-align: center;
-        }
-
-        .limited-badge {
-          display: inline-block;
-          padding: 6px 12px;
-          border-radius: 20px;
-          background: #fff0f0;
-          color: #e31b23;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 1px;
-        }
-
-        .game-heading h2 {
-          margin: 10px 0 5px;
-          font-size: 38px;
-          line-height: 1;
-          font-weight: 950;
-          letter-spacing: -1px;
-        }
-
-        .game-heading p {
-          margin: 10px auto 20px;
-          max-width: 440px;
-          color: #666;
-          font-size: 15px;
-          line-height: 1.5;
-        }
+        /* =========================
+           WHEEL
+        ========================= */
 
         .wheel-container {
           position: relative;
           width: min(88vw, 500px);
           aspect-ratio: 1;
-          margin: 10px auto 30px;
+          margin: 0 auto 28px;
         }
 
         .wheel {
@@ -594,8 +510,10 @@ export default function SpinGame() {
           width: 100%;
           height: 100%;
           z-index: 2;
+
           transition:
             transform 5.2s cubic-bezier(.12,.72,.12,1);
+
           will-change: transform;
         }
 
@@ -604,6 +522,7 @@ export default function SpinGame() {
           width: 100%;
           height: 100%;
           overflow: visible;
+
           filter:
             drop-shadow(
               0 12px 15px rgba(0,0,0,.20)
@@ -675,6 +594,11 @@ export default function SpinGame() {
           font-weight: 800;
         }
 
+
+        /* =========================
+           POINTER
+        ========================= */
+
         .pointer {
           position: absolute;
           top: -14px;
@@ -690,7 +614,9 @@ export default function SpinGame() {
           margin: auto;
           border-radius: 50%;
           background: #222;
-          box-shadow: 0 3px 7px rgba(0,0,0,.3);
+
+          box-shadow:
+            0 3px 7px rgba(0,0,0,.3);
         }
 
         .pointer-arrow {
@@ -698,6 +624,7 @@ export default function SpinGame() {
           color: #e31b23;
           font-size: 39px;
           line-height: 32px;
+
           text-shadow:
             0 3px 4px rgba(0,0,0,.25);
         }
@@ -708,6 +635,7 @@ export default function SpinGame() {
           border-radius: 50%;
           z-index: 1;
           pointer-events: none;
+
           box-shadow:
             0 0 35px rgba(227,27,35,.13);
         }
@@ -715,14 +643,21 @@ export default function SpinGame() {
         .wheel-loading {
           width: 100%;
           height: 100%;
+
           display: flex;
           align-items: center;
           justify-content: center;
+
           border-radius: 50%;
           background: #f1f1f1;
           color: #777;
           font-weight: 700;
         }
+
+
+        /* =========================
+           MOBILE ENTRY
+        ========================= */
 
         .entry-card {
           width: 100%;
@@ -733,55 +668,79 @@ export default function SpinGame() {
         .entry-card label {
           display: block;
           margin-bottom: 8px;
+
           color: #333;
           font-size: 11px;
           font-weight: 800;
           letter-spacing: .7px;
+          text-align: center;
         }
 
         .entry-card input {
           width: 100%;
           box-sizing: border-box;
+
           padding: 16px;
+
           border: 2px solid #e4e4e4;
           border-radius: 12px;
+
           background: white;
+
           font-size: 17px;
           text-align: center;
           letter-spacing: 1px;
+
           outline: none;
+
           transition: .2s;
         }
 
         .entry-card input:focus {
           border-color: #e31b23;
+
           box-shadow:
             0 0 0 3px rgba(227,27,35,.08);
         }
+
+
+        /* =========================
+           SPIN BUTTON
+        ========================= */
 
         .spin-button {
           width: 100%;
           margin-top: 12px;
           padding: 17px;
+
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 15px;
+
           border: none;
           border-radius: 12px;
+
           background: #e31b23;
           color: white;
+
           font-size: 17px;
           font-weight: 900;
           letter-spacing: .5px;
+
           cursor: pointer;
+
           box-shadow:
             0 7px 18px rgba(227,27,35,.25);
-          transition: transform .15s, box-shadow .15s;
+
+          transition:
+            transform .15s,
+            box-shadow .15s;
         }
 
         .spin-button:hover:not(:disabled) {
           transform: translateY(-2px);
+
           box-shadow:
             0 10px 24px rgba(227,27,35,.32);
         }
@@ -802,22 +761,34 @@ export default function SpinGame() {
 
         .one-spin {
           margin-top: 12px;
+
           text-align: center;
+
           color: #888;
           font-size: 12px;
         }
 
+
+        /* =========================
+           ERROR
+        ========================= */
+
         .error-message {
           max-width: 440px;
           margin: 15px auto 0;
+
           padding: 12px;
+
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 8px;
+
           border-radius: 9px;
+
           background: #fff1f1;
           color: #c5161d;
+
           font-size: 13px;
           text-align: center;
         }
@@ -825,25 +796,38 @@ export default function SpinGame() {
         .error-message span {
           width: 18px;
           height: 18px;
+
           display: inline-flex;
           align-items: center;
           justify-content: center;
+
           border-radius: 50%;
+
           background: #e31b23;
           color: white;
+
           font-weight: 900;
           font-size: 11px;
         }
+
+
+        /* =========================
+           WINNER MODAL
+        ========================= */
 
         .winner-overlay {
           position: fixed;
           inset: 0;
           z-index: 9999;
+
           display: flex;
           align-items: center;
           justify-content: center;
+
           padding: 20px;
+
           background: rgba(0,0,0,.72);
+
           backdrop-filter: blur(5px);
         }
 
@@ -851,26 +835,38 @@ export default function SpinGame() {
           width: 100%;
           max-width: 440px;
           max-height: 90vh;
+
           overflow-y: auto;
           box-sizing: border-box;
+
           padding: 32px 25px;
+
           border-radius: 24px;
+
           background: white;
+
           text-align: center;
+
           box-shadow:
             0 30px 100px rgba(0,0,0,.35);
-          animation: winnerIn .35s ease-out;
+
+          animation:
+            winnerIn .35s ease-out;
         }
 
         @keyframes winnerIn {
           from {
             opacity: 0;
-            transform: scale(.85) translateY(20px);
+            transform:
+              scale(.85)
+              translateY(20px);
           }
 
           to {
             opacity: 1;
-            transform: scale(1) translateY(0);
+            transform:
+              scale(1)
+              translateY(0);
           }
         }
 
@@ -881,6 +877,7 @@ export default function SpinGame() {
 
         .winner-small {
           color: #e31b23;
+
           font-size: 12px;
           font-weight: 900;
           letter-spacing: 1.5px;
@@ -888,28 +885,36 @@ export default function SpinGame() {
 
         .winner-modal h2 {
           margin: 5px 0 12px;
+
           font-size: 34px;
           font-weight: 950;
         }
 
         .winner-prize {
           padding: 14px 10px;
+
           border-radius: 12px;
+
           background: #fff2f2;
           color: #e31b23;
+
           font-size: 25px;
           font-weight: 950;
         }
 
         .winner-description {
           margin: 14px 0;
+
           color: #666;
+
           line-height: 1.5;
         }
 
         .coupon-title {
           margin-top: 20px;
+
           color: #777;
+
           font-size: 10px;
           font-weight: 800;
           letter-spacing: 1px;
@@ -917,9 +922,12 @@ export default function SpinGame() {
 
         .coupon-box {
           margin-top: 7px;
+
           padding: 14px;
+
           border: 2px dashed #e31b23;
           border-radius: 11px;
+
           background: #fffafa;
         }
 
@@ -933,17 +941,23 @@ export default function SpinGame() {
           width: 100%;
           margin-top: 10px;
           padding: 13px;
+
           border: none;
           border-radius: 10px;
+
           background: #222;
           color: white;
+
           font-weight: 800;
+
           cursor: pointer;
         }
 
         .coupon-note {
           margin: 12px 5px;
+
           color: #888;
+
           font-size: 11px;
           line-height: 1.5;
         }
@@ -952,32 +966,32 @@ export default function SpinGame() {
           width: 100%;
           margin-top: 8px;
           padding: 13px;
+
           border: 1px solid #ddd;
           border-radius: 10px;
+
           background: white;
           color: #333;
+
           font-weight: 800;
+
           cursor: pointer;
         }
+
+
+        /* =========================
+           MOBILE
+        ========================= */
 
         @media (max-width: 520px) {
 
           .spin-section {
-            margin: 20px auto;
-            padding: 25px 15px;
-            border-radius: 20px;
-          }
-
-          .game-heading h2 {
-            font-size: 32px;
-          }
-
-          .game-heading p {
-            font-size: 14px;
+            margin: 10px auto 25px;
+            padding: 5px 10px 25px;
           }
 
           .wheel-container {
-            width: min(92vw, 430px);
+            width: min(94vw, 430px);
             margin-bottom: 22px;
           }
 
