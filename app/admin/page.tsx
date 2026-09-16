@@ -23,6 +23,31 @@ type PrizeForm = {
   active: boolean;
 };
 
+/*
+ * ============================================================
+ * STAGE 3B - SPIN HISTORY TYPES
+ * ============================================================
+ */
+
+type Spin = {
+  id: string;
+  mobile: string;
+  prize_id: string;
+  coupon_id: string;
+  created_at: string;
+};
+
+type SpinHistory = {
+  id: string;
+  mobile: string;
+  prize_id: string;
+  coupon_id: string;
+  created_at: string;
+  prize_name: string;
+  coupon_code: string;
+  coupon_status: string;
+};
+
 const emptyForm: PrizeForm = {
   name: "",
   description: "",
@@ -40,6 +65,17 @@ export default function AdminDashboard() {
 
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [loadingPrizes, setLoadingPrizes] = useState(false);
+
+  /*
+   * ============================================================
+   * STAGE 3B - HISTORY STATE
+   * ============================================================
+   */
+
+  const [history, setHistory] = useState<SpinHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [refreshingHistory, setRefreshingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const [showForm, setShowForm] = useState(false);
   const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
@@ -79,7 +115,10 @@ export default function AdminDashboard() {
     setEmail(session.user.email || "");
     setChecking(false);
 
-    loadPrizes();
+    await Promise.all([
+      loadPrizes(),
+      loadHistory(),
+    ]);
   }
 
   async function loadPrizes() {
@@ -102,6 +141,209 @@ export default function AdminDashboard() {
 
     setPrizes((data || []) as Prize[]);
     setLoadingPrizes(false);
+  }
+
+  /*
+   * ============================================================
+   * STAGE 3B - LOAD SPIN & WIN HISTORY
+   *
+   * We intentionally query the tables separately.
+   *
+   * We do NOT use:
+   *
+   * prizes(name)
+   * coupons(code,status)
+   *
+   * because the previous nested relationship query did not
+   * work correctly with this Supabase database setup.
+   * ============================================================
+   */
+
+  async function loadHistory(showRefresh = false) {
+    if (showRefresh) {
+      setRefreshingHistory(true);
+    } else {
+      setLoadingHistory(true);
+    }
+
+    setHistoryError("");
+
+    try {
+      /*
+       * STEP 1
+       * Load latest 100 spins.
+       */
+
+      const { data: spinsData, error: spinsError } =
+        await supabase
+          .from("spins")
+          .select(
+            "id,mobile,prize_id,coupon_id,created_at"
+          )
+          .order("created_at", {
+            ascending: false,
+          })
+          .limit(100);
+
+      if (spinsError) {
+        throw new Error(
+          `Unable to load spins: ${spinsError.message}`
+        );
+      }
+
+      const spins = (spinsData || []) as Spin[];
+
+      /*
+       * If there are no spins, show empty state.
+       */
+
+      if (spins.length === 0) {
+        setHistory([]);
+        return;
+      }
+
+      /*
+       * STEP 2
+       * Get unique prize IDs.
+       */
+
+      const prizeIds = [
+        ...new Set(
+          spins
+            .map((spin) => spin.prize_id)
+            .filter(Boolean)
+        ),
+      ];
+
+      /*
+       * STEP 3
+       * Get unique coupon IDs.
+       */
+
+      const couponIds = [
+        ...new Set(
+          spins
+            .map((spin) => spin.coupon_id)
+            .filter(Boolean)
+        ),
+      ];
+
+      /*
+       * STEP 4
+       * Load prize details separately.
+       */
+
+      const {
+        data: prizesData,
+        error: prizesError,
+      } = await supabase
+        .from("prizes")
+        .select("id,name")
+        .in("id", prizeIds);
+
+      if (prizesError) {
+        throw new Error(
+          `Unable to load prize details: ${prizesError.message}`
+        );
+      }
+
+      /*
+       * STEP 5
+       * Load coupon details separately.
+       */
+
+      const {
+        data: couponsData,
+        error: couponsError,
+      } = await supabase
+        .from("coupons")
+        .select("id,code,status")
+        .in("id", couponIds);
+
+      if (couponsError) {
+        throw new Error(
+          `Unable to load coupon details: ${couponsError.message}`
+        );
+      }
+
+      /*
+       * STEP 6
+       * Create prize lookup map.
+       */
+
+      const prizeMap = new Map<string, string>();
+
+      (prizesData || []).forEach((prize) => {
+        prizeMap.set(prize.id, prize.name);
+      });
+
+      /*
+       * STEP 7
+       * Create coupon lookup map.
+       */
+
+      const couponMap = new Map<
+        string,
+        {
+          code: string;
+          status: string;
+        }
+      >();
+
+      (couponsData || []).forEach((coupon) => {
+        couponMap.set(coupon.id, {
+          code: coupon.code,
+          status: coupon.status,
+        });
+      });
+
+      /*
+       * STEP 8
+       * Combine spin + prize + coupon data.
+       */
+
+      const combinedHistory: SpinHistory[] =
+        spins.map((spin) => {
+          const coupon = couponMap.get(
+            spin.coupon_id
+          );
+
+          return {
+            id: spin.id,
+            mobile: spin.mobile,
+            prize_id: spin.prize_id,
+            coupon_id: spin.coupon_id,
+            created_at: spin.created_at,
+
+            prize_name:
+              prizeMap.get(spin.prize_id) ||
+              "Prize unavailable",
+
+            coupon_code:
+              coupon?.code ||
+              "Coupon unavailable",
+
+            coupon_status:
+              coupon?.status ||
+              "unknown",
+          };
+        });
+
+      setHistory(combinedHistory);
+    } catch (err) {
+      console.error(err);
+
+      setHistoryError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load spin history."
+      );
+
+      setHistory([]);
+    } finally {
+      setLoadingHistory(false);
+      setRefreshingHistory(false);
+    }
   }
 
   function openAddForm() {
@@ -150,7 +392,9 @@ export default function AdminDashboard() {
 
     const name = form.name.trim();
     const description = form.description.trim();
-    const couponPrefix = form.coupon_prefix.trim().toUpperCase();
+    const couponPrefix = form.coupon_prefix
+      .trim()
+      .toUpperCase();
 
     const weight = Number(form.weight);
     const sortOrder = Number(form.sort_order);
@@ -165,8 +409,13 @@ export default function AdminDashboard() {
       return;
     }
 
-    if (!Number.isInteger(sortOrder) || sortOrder < 1) {
-      setError("Display order must be a whole number starting from 1.");
+    if (
+      !Number.isInteger(sortOrder) ||
+      sortOrder < 1
+    ) {
+      setError(
+        "Display order must be a whole number starting from 1."
+      );
       return;
     }
 
@@ -176,7 +425,9 @@ export default function AdminDashboard() {
     }
 
     if (couponPrefix.length > 10) {
-      setError("Coupon prefix must be 10 characters or less.");
+      setError(
+        "Coupon prefix must be 10 characters or less."
+      );
       return;
     }
 
@@ -197,7 +448,10 @@ export default function AdminDashboard() {
 
       if (error) {
         console.error(error);
-        setError(error.message || "Unable to update prize.");
+        setError(
+          error.message ||
+            "Unable to update prize."
+        );
         setSaving(false);
         return;
       }
@@ -217,7 +471,10 @@ export default function AdminDashboard() {
 
       if (error) {
         console.error(error);
-        setError(error.message || "Unable to add prize.");
+        setError(
+          error.message ||
+            "Unable to add prize."
+        );
         setSaving(false);
         return;
       }
@@ -246,12 +503,17 @@ export default function AdminDashboard() {
 
     if (error) {
       console.error(error);
-      setError(error.message || "Unable to change prize status.");
+      setError(
+        error.message ||
+          "Unable to change prize status."
+      );
       return;
     }
 
     setMessage(
-      `${prize.name} is now ${!prize.active ? "active" : "inactive"}.`
+      `${prize.name} is now ${
+        !prize.active ? "active" : "inactive"
+      }.`
     );
 
     await loadPrizes();
@@ -275,12 +537,18 @@ export default function AdminDashboard() {
 
     if (error) {
       console.error(error);
-      setError(error.message || "Unable to delete prize.");
+      setError(
+        error.message ||
+          "Unable to delete prize."
+      );
       setDeleting(null);
       return;
     }
 
-    setMessage(`${prize.name} has been deleted.`);
+    setMessage(
+      `${prize.name} has been deleted.`
+    );
+
     setDeleting(null);
 
     await loadPrizes();
@@ -308,19 +576,20 @@ export default function AdminDashboard() {
   ).length;
 
   const totalWinningWeight = prizes.reduce(
-    (total, prize) => total + Number(prize.weight || 0),
+    (total, prize) =>
+      total + Number(prize.weight || 0),
     0
   );
 
   /*
    * Only active prizes participate in the wheel.
-   * This calculation is useful for the administrator
-   * to understand the currently active configuration.
    */
+
   const activeWinningWeight = prizes
     .filter((prize) => prize.active)
     .reduce(
-      (total, prize) => total + Number(prize.weight || 0),
+      (total, prize) =>
+        total + Number(prize.weight || 0),
       0
     );
 
@@ -328,8 +597,13 @@ export default function AdminDashboard() {
     return (
       <main className="loading">
         <div>
-          <div className="loader-mark">S</div>
-          <p>Checking administrator access...</p>
+          <div className="loader-mark">
+            S
+          </div>
+
+          <p>
+            Checking administrator access...
+          </p>
         </div>
 
         <style jsx>{`
@@ -368,10 +642,14 @@ export default function AdminDashboard() {
     <main className="admin-page">
       <header className="admin-header">
         <div className="header-brand">
-          <div className="header-mark">S</div>
+          <div className="header-mark">
+            S
+          </div>
 
           <div>
-            <div className="header-name">SINGHAGIRI</div>
+            <div className="header-name">
+              SINGHAGIRI
+            </div>
 
             <div className="header-subtitle">
               SPIN & WIN ADMIN
@@ -380,9 +658,13 @@ export default function AdminDashboard() {
         </div>
 
         <div className="header-right">
-          <span className="admin-email">{email}</span>
+          <span className="admin-email">
+            {email}
+          </span>
 
-          <button onClick={logout}>Logout</button>
+          <button onClick={logout}>
+            Logout
+          </button>
         </div>
       </header>
 
@@ -393,7 +675,9 @@ export default function AdminDashboard() {
               ADMINISTRATION
             </div>
 
-            <h1>Spin & Win Dashboard</h1>
+            <h1>
+              Spin & Win Dashboard
+            </h1>
 
             <p>
               Manage your Singhagiri Spin & Win campaign.
@@ -430,7 +714,9 @@ export default function AdminDashboard() {
               CAMPAIGN OVERVIEW
             </div>
 
-            <h2>Prize Overview</h2>
+            <h2>
+              Prize Overview
+            </h2>
 
             <p>
               Quick summary of your current Spin & Win configuration.
@@ -526,7 +812,9 @@ export default function AdminDashboard() {
           </div>
 
           <div>
-            <strong>Winning probability</strong>
+            <strong>
+              Winning probability
+            </strong>
 
             <p>
               Each active prize's probability is calculated from
@@ -541,7 +829,9 @@ export default function AdminDashboard() {
 
         <div className="section-header">
           <div>
-            <h2>Prize Management</h2>
+            <h2>
+              Prize Management
+            </h2>
 
             <p>
               Control prizes, winning weights and coupon settings.
@@ -550,7 +840,9 @@ export default function AdminDashboard() {
 
           <div className="prize-count">
             {prizes.length} prize
-            {prizes.length !== 1 ? "s" : ""}
+            {prizes.length !== 1
+              ? "s"
+              : ""}
           </div>
         </div>
 
@@ -560,9 +852,13 @@ export default function AdminDashboard() {
           </div>
         ) : prizes.length === 0 ? (
           <div className="empty-box">
-            <div className="empty-icon">🎁</div>
+            <div className="empty-icon">
+              🎁
+            </div>
 
-            <h3>No prizes found</h3>
+            <h3>
+              No prizes found
+            </h3>
 
             <p>
               Add your first Spin & Win prize to get started.
@@ -630,7 +926,9 @@ export default function AdminDashboard() {
                               ? "status active"
                               : "status inactive"
                           }
-                          onClick={() => togglePrize(prize)}
+                          onClick={() =>
+                            togglePrize(prize)
+                          }
                         >
                           {prize.active
                             ? "ACTIVE"
@@ -652,13 +950,15 @@ export default function AdminDashboard() {
                           <button
                             className="delete-button"
                             disabled={
-                              deleting === prize.id
+                              deleting ===
+                              prize.id
                             }
                             onClick={() =>
                               deletePrize(prize)
                             }
                           >
-                            {deleting === prize.id
+                            {deleting ===
+                            prize.id
                               ? "..."
                               : "Delete"}
                           </button>
@@ -672,9 +972,256 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* =====================================================
+            STAGE 3B - SPIN & WIN HISTORY
+        ====================================================== */}
+
+        <div className="section-header history-section-header">
+          <div>
+            <div className="eyebrow">
+              CAMPAIGN ACTIVITY
+            </div>
+
+            <h2>
+              Spin & Winner History
+            </h2>
+
+            <p>
+              View recent customer spins, prizes and generated coupon codes.
+            </p>
+          </div>
+
+          <button
+            className="refresh-button"
+            onClick={() =>
+              loadHistory(true)
+            }
+            disabled={
+              refreshingHistory ||
+              loadingHistory
+            }
+          >
+            {refreshingHistory
+              ? "Refreshing..."
+              : "↻ Refresh History"}
+          </button>
+        </div>
+
+        {/* HISTORY SUMMARY */}
+
+        <div className="history-summary">
+          <div className="history-summary-card">
+            <div className="history-summary-label">
+              SPINS LOADED
+            </div>
+
+            <div className="history-summary-value">
+              {history.length}
+            </div>
+
+            <div className="history-summary-description">
+              Latest spin records
+            </div>
+          </div>
+
+          <div className="history-summary-card">
+            <div className="history-summary-label">
+              ISSUED COUPONS
+            </div>
+
+            <div className="history-summary-value">
+              {
+                history.filter(
+                  (item) =>
+                    item.coupon_status ===
+                    "issued"
+                ).length
+              }
+            </div>
+
+            <div className="history-summary-description">
+              Coupons generated
+            </div>
+          </div>
+
+          <div className="history-summary-card">
+            <div className="history-summary-label">
+              LATEST SPIN
+            </div>
+
+            <div className="history-summary-latest">
+              {history.length > 0
+                ? new Date(
+                    history[0].created_at
+                  ).toLocaleString(
+                    "en-LK",
+                    {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }
+                  )
+                : "No spins yet"}
+            </div>
+
+            <div className="history-summary-description">
+              Most recent activity
+            </div>
+          </div>
+        </div>
+
+        {/* HISTORY ERROR */}
+
+        {historyError && (
+          <div className="history-error">
+            <div>
+              <strong>
+                Unable to load spin history
+              </strong>
+
+              <p>
+                {historyError}
+              </p>
+            </div>
+
+            <button
+              onClick={() =>
+                loadHistory(true)
+              }
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+
+        {/* HISTORY TABLE */}
+
+        {loadingHistory ? (
+          <div className="loading-box">
+            Loading spin history...
+          </div>
+        ) : history.length === 0 ? (
+          <div className="empty-box">
+            <div className="empty-icon">
+              🎡
+            </div>
+
+            <h3>
+              No spin records yet
+            </h3>
+
+            <p>
+              Customer Spin & Win activity will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="table-card history-table-card">
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>DATE & TIME</th>
+                    <th>MOBILE</th>
+                    <th>PRIZE</th>
+                    <th>COUPON CODE</th>
+                    <th>STATUS</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {history.map((spin) => {
+                    const date =
+                      new Date(
+                        spin.created_at
+                      );
+
+                    const formattedDate =
+                      date.toLocaleString(
+                        "en-LK",
+                        {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }
+                      );
+
+                    const mobile =
+                      spin.mobile.length > 7
+                        ? `${spin.mobile.slice(
+                            0,
+                            5
+                          )}****${spin.mobile.slice(
+                            -2
+                          )}`
+                        : spin.mobile;
+
+                    return (
+                      <tr
+                        key={spin.id}
+                      >
+                        <td>
+                          <div className="history-date">
+                            {formattedDate}
+                          </div>
+                        </td>
+
+                        <td>
+                          <span className="history-mobile">
+                            {mobile}
+                          </span>
+                        </td>
+
+                        <td>
+                          <div className="history-prize">
+                            {spin.prize_name}
+                          </div>
+                        </td>
+
+                        <td>
+                          <span className="history-coupon">
+                            {spin.coupon_code}
+                          </span>
+                        </td>
+
+                        <td>
+                          {spin.coupon_status ===
+                          "issued" ? (
+                            <span className="history-status issued">
+                              ISSUED
+                            </span>
+                          ) : spin.coupon_status ===
+                            "redeemed" ? (
+                            <span className="history-status redeemed">
+                              REDEEMED
+                            </span>
+                          ) : (
+                            <span className="history-status unknown">
+                              {spin.coupon_status.toUpperCase()}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div className="history-limit-note">
+          Showing the latest 100 spin records.
+        </div>
+
         <button
           className="back-button"
-          onClick={() => router.push("/")}
+          onClick={() =>
+            router.push("/")
+          }
         >
           ← View Spin & Win
         </button>
@@ -709,7 +1256,9 @@ export default function AdminDashboard() {
 
             <form onSubmit={savePrize}>
               <div className="form-field">
-                <label>PRIZE NAME</label>
+                <label>
+                  PRIZE NAME
+                </label>
 
                 <input
                   type="text"
@@ -726,16 +1275,21 @@ export default function AdminDashboard() {
               </div>
 
               <div className="form-field">
-                <label>DESCRIPTION</label>
+                <label>
+                  DESCRIPTION
+                </label>
 
                 <textarea
-                  value={form.description}
+                  value={
+                    form.description
+                  }
                   placeholder="Optional prize description"
                   rows={3}
                   onChange={(e) =>
                     setForm({
                       ...form,
-                      description: e.target.value,
+                      description:
+                        e.target.value,
                     })
                   }
                   disabled={saving}
@@ -744,7 +1298,9 @@ export default function AdminDashboard() {
 
               <div className="form-grid">
                 <div className="form-field">
-                  <label>WINNING WEIGHT</label>
+                  <label>
+                    WINNING WEIGHT
+                  </label>
 
                   <input
                     type="number"
@@ -754,7 +1310,8 @@ export default function AdminDashboard() {
                     onChange={(e) =>
                       setForm({
                         ...form,
-                        weight: e.target.value,
+                        weight:
+                          e.target.value,
                       })
                     }
                     disabled={saving}
@@ -766,17 +1323,22 @@ export default function AdminDashboard() {
                 </div>
 
                 <div className="form-field">
-                  <label>DISPLAY ORDER</label>
+                  <label>
+                    DISPLAY ORDER
+                  </label>
 
                   <input
                     type="number"
                     min="1"
                     step="1"
-                    value={form.sort_order}
+                    value={
+                      form.sort_order
+                    }
                     onChange={(e) =>
                       setForm({
                         ...form,
-                        sort_order: e.target.value,
+                        sort_order:
+                          e.target.value,
                       })
                     }
                     disabled={saving}
@@ -789,12 +1351,16 @@ export default function AdminDashboard() {
               </div>
 
               <div className="form-field">
-                <label>COUPON PREFIX</label>
+                <label>
+                  COUPON PREFIX
+                </label>
 
                 <input
                   type="text"
                   maxLength={10}
-                  value={form.coupon_prefix}
+                  value={
+                    form.coupon_prefix
+                  }
                   placeholder="e.g. SG10"
                   onChange={(e) =>
                     setForm({
@@ -813,7 +1379,9 @@ export default function AdminDashboard() {
 
               <div className="active-toggle">
                 <div>
-                  <strong>Prize Status</strong>
+                  <strong>
+                    Prize Status
+                  </strong>
 
                   <p>
                     {form.active
@@ -832,7 +1400,8 @@ export default function AdminDashboard() {
                   onClick={() =>
                     setForm({
                       ...form,
-                      active: !form.active,
+                      active:
+                        !form.active,
                     })
                   }
                   disabled={saving}
@@ -1353,6 +1922,178 @@ export default function AdminDashboard() {
         }
 
         /* =====================================================
+           STAGE 3B - HISTORY
+        ====================================================== */
+
+        .history-section-header {
+          margin-top: 42px;
+        }
+
+        .refresh-button {
+          padding: 10px 14px;
+          border: 1px solid #ddd;
+          border-radius: 9px;
+          background: white;
+          color: #444;
+          font-size: 11px;
+          font-weight: 850;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .refresh-button:hover {
+          background: #f8f8f8;
+        }
+
+        .refresh-button:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .history-summary {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 15px;
+          margin-bottom: 15px;
+        }
+
+        .history-summary-card {
+          min-height: 105px;
+          padding: 18px;
+          box-sizing: border-box;
+          border-radius: 13px;
+          background: white;
+          border: 1px solid #eeeeee;
+          box-shadow: 0 6px 25px rgba(0, 0, 0, 0.04);
+        }
+
+        .history-summary-label {
+          color: #999;
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 1px;
+        }
+
+        .history-summary-value {
+          margin-top: 7px;
+          color: #222;
+          font-size: 27px;
+          line-height: 1;
+          font-weight: 950;
+        }
+
+        .history-summary-latest {
+          margin-top: 8px;
+          color: #222;
+          font-size: 14px;
+          font-weight: 850;
+        }
+
+        .history-summary-description {
+          margin-top: 7px;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .history-error {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 15px;
+          margin-bottom: 15px;
+          padding: 13px 15px;
+          border: 1px solid #f2cccc;
+          border-radius: 10px;
+          background: #fff5f5;
+          color: #c5161d;
+        }
+
+        .history-error strong {
+          font-size: 12px;
+        }
+
+        .history-error p {
+          margin: 3px 0 0;
+          color: #d04444;
+          font-size: 11px;
+        }
+
+        .history-error button {
+          padding: 8px 12px;
+          border: 1px solid #e5aaaa;
+          border-radius: 7px;
+          background: white;
+          color: #c5161d;
+          font-size: 10px;
+          font-weight: 850;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .history-table-card {
+          margin-top: 0;
+        }
+
+        .history-date {
+          color: #666;
+          font-size: 11px;
+          white-space: nowrap;
+        }
+
+        .history-mobile {
+          color: #444;
+          font-family: monospace;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .history-prize {
+          color: #222;
+          font-size: 13px;
+          font-weight: 850;
+        }
+
+        .history-coupon {
+          display: inline-block;
+          padding: 6px 9px;
+          border-radius: 7px;
+          background: #fff5f5;
+          color: #c5161d;
+          font-family: monospace;
+          font-size: 11px;
+          font-weight: 900;
+        }
+
+        .history-status {
+          display: inline-block;
+          padding: 7px 10px;
+          border-radius: 20px;
+          font-size: 8px;
+          font-weight: 900;
+        }
+
+        .history-status.issued {
+          background: #edf9f0;
+          color: #24733b;
+        }
+
+        .history-status.redeemed {
+          background: #f0edff;
+          color: #6351a8;
+        }
+
+        .history-status.unknown {
+          background: #f1f1f1;
+          color: #888;
+        }
+
+        .history-limit-note {
+          margin-top: 9px;
+          color: #aaa;
+          font-size: 10px;
+        }
+
+        /* =====================================================
            MODAL
         ====================================================== */
 
@@ -1602,6 +2343,29 @@ export default function AdminDashboard() {
           .modal {
             padding: 22px 18px;
             border-radius: 17px;
+          }
+
+          /* Stage 3B mobile */
+
+          .history-summary {
+            grid-template-columns: 1fr;
+          }
+
+          .history-section-header {
+            align-items: flex-start;
+          }
+
+          .refresh-button {
+            width: 100%;
+          }
+
+          .history-error {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .history-error button {
+            width: 100%;
           }
         }
       `}</style>
