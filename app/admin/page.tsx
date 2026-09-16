@@ -23,31 +23,6 @@ type PrizeForm = {
   active: boolean;
 };
 
-type Spin = {
-  id: string;
-  mobile: string;
-  prize_id: string;
-  coupon_id: string;
-  created_at: string;
-};
-
-type Coupon = {
-  id: string;
-  code: string;
-  status: string;
-};
-
-type SpinHistory = {
-  id: string;
-  mobile: string;
-  prize_id: string;
-  coupon_id: string;
-  created_at: string;
-  prize_name: string;
-  coupon_code: string;
-  coupon_status: string;
-};
-
 const emptyForm: PrizeForm = {
   name: "",
   description: "",
@@ -57,24 +32,21 @@ const emptyForm: PrizeForm = {
   active: true,
 };
 
-export default function AdminPage() {
+export default function AdminDashboard() {
   const router = useRouter();
 
-  const [email, setEmail] = useState("");
   const [checking, setChecking] = useState(true);
+  const [email, setEmail] = useState("");
 
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [loadingPrizes, setLoadingPrizes] = useState(false);
 
-  const [history, setHistory] = useState<SpinHistory[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [refreshingHistory, setRefreshingHistory] = useState(false);
-  const [historyError, setHistoryError] = useState("");
-
   const [showForm, setShowForm] = useState(false);
   const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
   const [form, setForm] = useState<PrizeForm>(emptyForm);
+
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -83,8 +55,6 @@ export default function AdminPage() {
   }, []);
 
   async function checkAdmin() {
-    setChecking(true);
-
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -94,13 +64,13 @@ export default function AdminPage() {
       return;
     }
 
-    const { data: adminUser, error: adminError } = await supabase
+    const { data: admin, error: adminError } = await supabase
       .from("admin_users")
       .select("user_id")
       .eq("user_id", session.user.id)
       .maybeSingle();
 
-    if (adminError || !adminUser) {
+    if (adminError || !admin) {
       await supabase.auth.signOut();
       router.replace("/admin/login");
       return;
@@ -109,169 +79,29 @@ export default function AdminPage() {
     setEmail(session.user.email || "");
     setChecking(false);
 
-    await Promise.all([loadPrizes(), loadHistory()]);
+    loadPrizes();
   }
 
   async function loadPrizes() {
     setLoadingPrizes(true);
     setError("");
 
-    const { data, error: prizesError } = await supabase
+    const { data, error } = await supabase
       .from("prizes")
       .select(
         "id,name,description,weight,active,sort_order,coupon_prefix"
       )
       .order("sort_order", { ascending: true });
 
-    if (prizesError) {
-      setError(prizesError.message);
-      setPrizes([]);
-    } else {
-      setPrizes((data || []) as Prize[]);
+    if (error) {
+      console.error(error);
+      setError("Unable to load prizes.");
+      setLoadingPrizes(false);
+      return;
     }
 
+    setPrizes((data || []) as Prize[]);
     setLoadingPrizes(false);
-  }
-
-  async function loadHistory(showRefresh = false) {
-    if (showRefresh) {
-      setRefreshingHistory(true);
-    } else {
-      setLoadingHistory(true);
-    }
-
-    setHistoryError("");
-
-    try {
-      /*
-       * STEP 1
-       * Get spin records.
-       *
-       * IMPORTANT:
-       * We intentionally do NOT use:
-       *
-       * prizes(name)
-       * coupons(code,status)
-       *
-       * because the previous nested relationship query caused
-       * problems with this Supabase setup.
-       */
-      const { data: spinsData, error: spinsError } = await supabase
-        .from("spins")
-        .select("id,mobile,prize_id,coupon_id,created_at")
-        .order("created_at", { ascending: false })
-        .limit(100);
-
-      if (spinsError) {
-        throw new Error(`Spins: ${spinsError.message}`);
-      }
-
-      const spins = (spinsData || []) as Spin[];
-
-      if (spins.length === 0) {
-        setHistory([]);
-        return;
-      }
-
-      /*
-       * STEP 2
-       * Get unique prize IDs and coupon IDs.
-       */
-      const prizeIds = [
-        ...new Set(
-          spins
-            .map((spin) => spin.prize_id)
-            .filter(Boolean)
-        ),
-      ];
-
-      const couponIds = [
-        ...new Set(
-          spins
-            .map((spin) => spin.coupon_id)
-            .filter(Boolean)
-        ),
-      ];
-
-      /*
-       * STEP 3
-       * Load prizes separately.
-       */
-      const { data: prizesData, error: prizesError } = await supabase
-        .from("prizes")
-        .select("id,name")
-        .in("id", prizeIds);
-
-      if (prizesError) {
-        throw new Error(`Prizes: ${prizesError.message}`);
-      }
-
-      /*
-       * STEP 4
-       * Load coupons separately.
-       */
-      const { data: couponsData, error: couponsError } = await supabase
-        .from("coupons")
-        .select("id,code,status")
-        .in("id", couponIds);
-
-      if (couponsError) {
-        throw new Error(`Coupons: ${couponsError.message}`);
-      }
-
-      const prizeMap = new Map<string, string>();
-
-      (prizesData || []).forEach((prize) => {
-        prizeMap.set(prize.id, prize.name);
-      });
-
-      const couponMap = new Map<
-        string,
-        { code: string; status: string }
-      >();
-
-      (couponsData || []).forEach((coupon) => {
-        couponMap.set(coupon.id, {
-          code: coupon.code,
-          status: coupon.status,
-        });
-      });
-
-      /*
-       * STEP 5
-       * Combine everything into one history list.
-       */
-      const combinedHistory: SpinHistory[] = spins.map((spin) => {
-        const coupon = couponMap.get(spin.coupon_id);
-
-        return {
-          id: spin.id,
-          mobile: spin.mobile,
-          prize_id: spin.prize_id,
-          coupon_id: spin.coupon_id,
-          created_at: spin.created_at,
-          prize_name:
-            prizeMap.get(spin.prize_id) || "Prize unavailable",
-          coupon_code:
-            coupon?.code || "Coupon unavailable",
-          coupon_status:
-            coupon?.status || "unknown",
-        };
-      });
-
-      setHistory(combinedHistory);
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : "Failed to load spin history.";
-
-      setHistoryError(errorMessage);
-      setHistory([]);
-    } finally {
-      setLoadingHistory(false);
-      setRefreshingHistory(false);
-    }
   }
 
   function openAddForm() {
@@ -310,14 +140,13 @@ export default function AdminPage() {
     setShowForm(false);
     setEditingPrize(null);
     setForm(emptyForm);
-    setError("");
   }
 
   async function savePrize(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    setMessage("");
     setError("");
+    setMessage("");
 
     const name = form.name.trim();
     const description = form.description.trim();
@@ -327,7 +156,7 @@ export default function AdminPage() {
     const sortOrder = Number(form.sort_order);
 
     if (!name) {
-      setError("Prize name is required.");
+      setError("Please enter a prize name.");
       return;
     }
 
@@ -336,16 +165,13 @@ export default function AdminPage() {
       return;
     }
 
-    if (
-      !Number.isInteger(sortOrder) ||
-      sortOrder < 1
-    ) {
-      setError("Sort order must be a whole number greater than 0.");
+    if (!Number.isInteger(sortOrder) || sortOrder < 1) {
+      setError("Display order must be a whole number starting from 1.");
       return;
     }
 
     if (!couponPrefix) {
-      setError("Coupon prefix is required.");
+      setError("Please enter a coupon prefix.");
       return;
     }
 
@@ -357,40 +183,41 @@ export default function AdminPage() {
     setSaving(true);
 
     if (editingPrize) {
-      const { error: updateError } = await supabase
+      const { error } = await supabase
         .from("prizes")
         .update({
           name,
           description: description || null,
           weight,
-          coupon_prefix: couponPrefix,
-          sort_order: sortOrder,
           active: form.active,
-          updated_at: new Date().toISOString(),
+          sort_order: sortOrder,
+          coupon_prefix: couponPrefix,
         })
         .eq("id", editingPrize.id);
 
-      if (updateError) {
-        setError(updateError.message);
+      if (error) {
+        console.error(error);
+        setError(error.message || "Unable to update prize.");
         setSaving(false);
         return;
       }
 
       setMessage("Prize updated successfully.");
     } else {
-      const { error: insertError } = await supabase
+      const { error } = await supabase
         .from("prizes")
         .insert({
           name,
           description: description || null,
           weight,
-          coupon_prefix: couponPrefix,
-          sort_order: sortOrder,
           active: form.active,
+          sort_order: sortOrder,
+          coupon_prefix: couponPrefix,
         });
 
-      if (insertError) {
-        setError(insertError.message);
+      if (error) {
+        console.error(error);
+        setError(error.message || "Unable to add prize.");
         setSaving(false);
         return;
       }
@@ -410,23 +237,21 @@ export default function AdminPage() {
     setError("");
     setMessage("");
 
-    const { error: updateError } = await supabase
+    const { error } = await supabase
       .from("prizes")
       .update({
         active: !prize.active,
-        updated_at: new Date().toISOString(),
       })
       .eq("id", prize.id);
 
-    if (updateError) {
-      setError(updateError.message);
+    if (error) {
+      console.error(error);
+      setError(error.message || "Unable to change prize status.");
       return;
     }
 
     setMessage(
-      `${prize.name} has been ${
-        !prize.active ? "activated" : "deactivated"
-      }.`
+      `${prize.name} is now ${!prize.active ? "active" : "inactive"}.`
     );
 
     await loadPrizes();
@@ -434,25 +259,29 @@ export default function AdminPage() {
 
   async function deletePrize(prize: Prize) {
     const confirmed = window.confirm(
-      `Are you sure you want to delete "${prize.name}"?`
+      `Delete "${prize.name}"?\n\nThis action cannot be undone.`
     );
 
     if (!confirmed) return;
 
+    setDeleting(prize.id);
     setError("");
     setMessage("");
 
-    const { error: deleteError } = await supabase
+    const { error } = await supabase
       .from("prizes")
       .delete()
       .eq("id", prize.id);
 
-    if (deleteError) {
-      setError(deleteError.message);
+    if (error) {
+      console.error(error);
+      setError(error.message || "Unable to delete prize.");
+      setDeleting(null);
       return;
     }
 
-    setMessage("Prize deleted successfully.");
+    setMessage(`${prize.name} has been deleted.`);
+    setDeleting(null);
 
     await loadPrizes();
   }
@@ -462,31 +291,11 @@ export default function AdminPage() {
     router.replace("/admin/login");
   }
 
-  function maskMobile(mobile: string) {
-    if (!mobile) return "-";
-
-    if (mobile.length <= 5) {
-      return mobile;
-    }
-
-    return `${mobile.slice(0, 5)}****${mobile.slice(-2)}`;
-  }
-
-  function formatDate(dateString: string) {
-    const date = new Date(dateString);
-
-    if (Number.isNaN(date.getTime())) {
-      return dateString;
-    }
-
-    return date.toLocaleString("en-LK", {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
+  /*
+   * ============================================================
+   * STAGE 3A - ADMIN OVERVIEW CALCULATIONS
+   * ============================================================
+   */
 
   const totalPrizes = prizes.length;
 
@@ -499,664 +308,1303 @@ export default function AdminPage() {
   ).length;
 
   const totalWinningWeight = prizes.reduce(
-    (total, prize) =>
-      total + Number(prize.weight || 0),
+    (total, prize) => total + Number(prize.weight || 0),
     0
   );
 
+  /*
+   * Only active prizes participate in the wheel.
+   * This calculation is useful for the administrator
+   * to understand the currently active configuration.
+   */
   const activeWinningWeight = prizes
     .filter((prize) => prize.active)
     .reduce(
-      (total, prize) =>
-        total + Number(prize.weight || 0),
+      (total, prize) => total + Number(prize.weight || 0),
       0
     );
 
+  if (checking) {
+    return (
+      <main className="loading">
+        <div>
+          <div className="loader-mark">S</div>
+          <p>Checking administrator access...</p>
+        </div>
+
+        <style jsx>{`
+          .loading {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            background: #f5f5f5;
+          }
+
+          .loader-mark {
+            width: 50px;
+            height: 50px;
+            margin: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            background: #e31b23;
+            color: white;
+            font-size: 28px;
+            font-weight: 900;
+          }
+
+          p {
+            color: #777;
+          }
+        `}</style>
+      </main>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-slate-50">
-      {checking ? (
-        <div className="flex min-h-screen items-center justify-center">
-          <div className="text-center">
-            <div className="mb-3 text-lg font-semibold text-slate-700">
-              Checking admin access...
-            </div>
-            <div className="text-sm text-slate-500">
-              Please wait.
+    <main className="admin-page">
+      <header className="admin-header">
+        <div className="header-brand">
+          <div className="header-mark">S</div>
+
+          <div>
+            <div className="header-name">SINGHAGIRI</div>
+
+            <div className="header-subtitle">
+              SPIN & WIN ADMIN
             </div>
           </div>
         </div>
-      ) : (
-        <>
-          {/* HEADER */}
-          <header className="border-b bg-white shadow-sm">
-            <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-              <div>
-                <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">
-                  Singhagiri Spin & Win
-                </h1>
-                <p className="text-sm text-slate-500">
-                  Admin Dashboard
-                </p>
-              </div>
 
-              <div className="flex items-center gap-3">
-                <span className="hidden text-sm text-slate-600 sm:block">
-                  {email}
-                </span>
+        <div className="header-right">
+          <span className="admin-email">{email}</span>
 
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                >
-                  Logout
-                </button>
-              </div>
-            </div>
-          </header>
+          <button onClick={logout}>Logout</button>
+        </div>
+      </header>
 
-          {/* CONTENT */}
-          <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-            <div className="mb-8">
-              <h2 className="text-2xl font-bold text-slate-900">
-                Dashboard
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Manage Spin & Win prizes and review customer spin history.
-              </p>
+      <section className="dashboard">
+        <div className="welcome">
+          <div>
+            <div className="eyebrow">
+              ADMINISTRATION
             </div>
 
-            {/* GLOBAL MESSAGES */}
-            {message && (
-              <div className="mb-6 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-                {message}
-              </div>
-            )}
+            <h1>Spin & Win Dashboard</h1>
 
-            {error && (
-              <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {error}
-              </div>
-            )}
+            <p>
+              Manage your Singhagiri Spin & Win campaign.
+            </p>
+          </div>
 
-            {/* STAGE 3A */}
-            <section className="mb-10">
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold text-slate-900">
-                  Stage 3A — Prize Overview
-                </h3>
-              </div>
+          <button
+            className="add-button"
+            onClick={openAddForm}
+          >
+            + Add Prize
+          </button>
+        </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Total Prizes
-                  </p>
-                  <p className="mt-2 text-3xl font-bold text-slate-900">
-                    {totalPrizes}
-                  </p>
-                </div>
+        {message && (
+          <div className="success-message">
+            ✓ {message}
+          </div>
+        )}
 
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Active Prizes
-                  </p>
-                  <p className="mt-2 text-3xl font-bold text-green-600">
-                    {activePrizes}
-                  </p>
-                </div>
+        {error && (
+          <div className="error-message">
+            ! {error}
+          </div>
+        )}
 
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Inactive Prizes
-                  </p>
-                  <p className="mt-2 text-3xl font-bold text-slate-500">
-                    {inactivePrizes}
-                  </p>
-                </div>
+        {/* =====================================================
+            STAGE 3A - ADMIN OVERVIEW
+        ====================================================== */}
 
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Active Winning Weight
-                  </p>
-                  <p className="mt-2 text-3xl font-bold text-blue-600">
-                    {activeWinningWeight}
-                  </p>
-                </div>
+        <div className="overview-header">
+          <div>
+            <div className="eyebrow">
+              CAMPAIGN OVERVIEW
+            </div>
+
+            <h2>Prize Overview</h2>
+
+            <p>
+              Quick summary of your current Spin & Win configuration.
+            </p>
+          </div>
+        </div>
+
+        <div className="overview-grid">
+          <div className="overview-card">
+            <div className="overview-icon">
+              🎁
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                TOTAL PRIZES
               </div>
 
-              <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
-                <p className="text-sm leading-6 text-blue-800">
-                  <strong>How winning probability works:</strong>{" "}
-                  each active prize uses its weight to determine its
-                  relative chance of being selected. For example, if
-                  the active prizes have total weight 100 and one prize
-                  has weight 20, that prize has a 20% selection
-                  probability.
-                </p>
-
-                <p className="mt-2 text-xs text-blue-700">
-                  Total weight across all prizes:{" "}
-                  <strong>{totalWinningWeight}</strong>
-                </p>
-              </div>
-            </section>
-
-            {/* PRIZE MANAGEMENT */}
-            <section className="mb-10">
-              <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Prize Management
-                  </h3>
-                  <p className="text-sm text-slate-500">
-                    Add, edit, activate, deactivate, or delete prizes.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={openAddForm}
-                  className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-                >
-                  + Add Prize
-                </button>
+              <div className="overview-value">
+                {totalPrizes}
               </div>
 
-              <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-                {loadingPrizes ? (
-                  <div className="p-8 text-center text-sm text-slate-500">
-                    Loading prizes...
-                  </div>
-                ) : prizes.length === 0 ? (
-                  <div className="p-8 text-center text-sm text-slate-500">
-                    No prizes found.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[900px]">
-                      <thead className="border-b bg-slate-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Order
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Prize
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Weight
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Coupon Prefix
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Status
-                          </th>
-
-                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
-
-                      <tbody className="divide-y">
-                        {prizes.map((prize) => (
-                          <tr key={prize.id}>
-                            <td className="px-4 py-4 text-sm text-slate-700">
-                              {prize.sort_order}
-                            </td>
-
-                            <td className="px-4 py-4">
-                              <div className="font-medium text-slate-900">
-                                {prize.name}
-                              </div>
-
-                              {prize.description && (
-                                <div className="mt-1 max-w-md text-xs text-slate-500">
-                                  {prize.description}
-                                </div>
-                              )}
-                            </td>
-
-                            <td className="px-4 py-4 text-sm font-semibold text-slate-700">
-                              {prize.weight}
-                            </td>
-
-                            <td className="px-4 py-4">
-                              <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                                {prize.coupon_prefix}
-                              </span>
-                            </td>
-
-                            <td className="px-4 py-4">
-                              {prize.active ? (
-                                <span className="inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
-                                  Active
-                                </span>
-                              ) : (
-                                <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">
-                                  Inactive
-                                </span>
-                              )}
-                            </td>
-
-                            <td className="px-4 py-4">
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => openEditForm(prize)}
-                                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                                >
-                                  Edit
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => togglePrize(prize)}
-                                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                                >
-                                  {prize.active
-                                    ? "Deactivate"
-                                    : "Activate"}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => deletePrize(prize)}
-                                  className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+              <div className="overview-description">
+                All configured prizes
               </div>
-            </section>
-
-            {/* STAGE 3B */}
-            <section className="mb-10">
-              <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Stage 3B — Spin & Winner History
-                  </h3>
-
-                  <p className="text-sm text-slate-500">
-                    View the latest customer spins, prizes, and coupon codes.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => loadHistory(true)}
-                  disabled={refreshingHistory || loadingHistory}
-                  className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {refreshingHistory
-                    ? "Refreshing..."
-                    : "Refresh History"}
-                </button>
-              </div>
-
-              {/* HISTORY SUMMARY */}
-              <div className="mb-4 grid gap-4 sm:grid-cols-3">
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Total Spins Loaded
-                  </p>
-
-                  <p className="mt-2 text-3xl font-bold text-slate-900">
-                    {history.length}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Issued Coupons
-                  </p>
-
-                  <p className="mt-2 text-3xl font-bold text-green-600">
-                    {
-                      history.filter(
-                        (item) =>
-                          item.coupon_status === "issued"
-                      ).length
-                    }
-                  </p>
-                </div>
-
-                <div className="rounded-xl border bg-white p-5 shadow-sm">
-                  <p className="text-sm text-slate-500">
-                    Latest Spin
-                  </p>
-
-                  <p className="mt-2 text-sm font-semibold text-slate-900">
-                    {history.length > 0
-                      ? formatDate(history[0].created_at)
-                      : "No spins"}
-                  </p>
-                </div>
-              </div>
-
-              {/* HISTORY ERROR */}
-              {historyError && (
-                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4">
-                  <p className="text-sm font-semibold text-red-700">
-                    Unable to load spin history
-                  </p>
-
-                  <p className="mt-1 break-words text-sm text-red-600">
-                    {historyError}
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => loadHistory(true)}
-                    className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              )}
-
-              {/* HISTORY TABLE */}
-              <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
-                {loadingHistory ? (
-                  <div className="p-8 text-center text-sm text-slate-500">
-                    Loading spin history...
-                  </div>
-                ) : history.length === 0 ? (
-                  <div className="p-8 text-center">
-                    <p className="text-sm font-medium text-slate-700">
-                      No spin records found.
-                    </p>
-
-                    <p className="mt-1 text-xs text-slate-500">
-                      Customer spins will appear here after they use the
-                      Spin & Win wheel.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[900px]">
-                      <thead className="border-b bg-slate-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Date & Time
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Mobile
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Prize
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Coupon
-                          </th>
-
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Status
-                          </th>
-                        </tr>
-                      </thead>
-
-                      <tbody className="divide-y">
-                        {history.map((spin) => (
-                          <tr key={spin.id}>
-                            <td className="whitespace-nowrap px-4 py-4 text-sm text-slate-600">
-                              {formatDate(spin.created_at)}
-                            </td>
-
-                            <td className="whitespace-nowrap px-4 py-4 text-sm font-medium text-slate-800">
-                              {maskMobile(spin.mobile)}
-                            </td>
-
-                            <td className="px-4 py-4">
-                              <div className="font-medium text-slate-900">
-                                {spin.prize_name}
-                              </div>
-                            </td>
-
-                            <td className="px-4 py-4">
-                              <span className="rounded-md bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700">
-                                {spin.coupon_code}
-                              </span>
-                            </td>
-
-                            <td className="px-4 py-4">
-                              {spin.coupon_status === "issued" ? (
-                                <span className="inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
-                                  Issued
-                                </span>
-                              ) : spin.coupon_status ===
-                                "redeemed" ? (
-                                <span className="inline-flex rounded-full bg-purple-100 px-2.5 py-1 text-xs font-semibold text-purple-700">
-                                  Redeemed
-                                </span>
-                              ) : (
-                                <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-                                  {spin.coupon_status}
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <p className="mt-3 text-xs text-slate-500">
-                Showing the latest 100 spin records.
-              </p>
-            </section>
-
-            {/* BACK BUTTON */}
-            <div>
-              <button
-                type="button"
-                onClick={() => router.push("/")}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                ← Back to Spin & Win
-              </button>
             </div>
           </div>
 
-          {/* ADD / EDIT MODAL */}
-          {showForm && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-              <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-xl">
-                <div className="border-b px-6 py-5">
-                  <h3 className="text-lg font-bold text-slate-900">
-                    {editingPrize
-                      ? "Edit Prize"
-                      : "Add New Prize"}
-                  </h3>
+          <div className="overview-card">
+            <div className="overview-icon active-icon">
+              ✓
+            </div>
 
-                  <p className="mt-1 text-sm text-slate-500">
-                    Configure the prize and its winning probability.
+            <div className="overview-content">
+              <div className="overview-label">
+                ACTIVE PRIZES
+              </div>
+
+              <div className="overview-value">
+                {activePrizes}
+              </div>
+
+              <div className="overview-description">
+                Currently available on wheel
+              </div>
+            </div>
+          </div>
+
+          <div className="overview-card">
+            <div className="overview-icon inactive-icon">
+              ○
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                INACTIVE PRIZES
+              </div>
+
+              <div className="overview-value">
+                {inactivePrizes}
+              </div>
+
+              <div className="overview-description">
+                Currently disabled
+              </div>
+            </div>
+          </div>
+
+          <div className="overview-card">
+            <div className="overview-icon weight-icon">
+              %
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                ACTIVE WEIGHT
+              </div>
+
+              <div className="overview-value">
+                {activeWinningWeight}
+              </div>
+
+              <div className="overview-description">
+                Total active winning weight
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="weight-info">
+          <div className="weight-info-icon">
+            ℹ
+          </div>
+
+          <div>
+            <strong>Winning probability</strong>
+
+            <p>
+              Each active prize's probability is calculated from
+              its weight relative to the total active weight.
+            </p>
+          </div>
+        </div>
+
+        {/* =====================================================
+            PRIZE MANAGEMENT
+        ====================================================== */}
+
+        <div className="section-header">
+          <div>
+            <h2>Prize Management</h2>
+
+            <p>
+              Control prizes, winning weights and coupon settings.
+            </p>
+          </div>
+
+          <div className="prize-count">
+            {prizes.length} prize
+            {prizes.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+
+        {loadingPrizes ? (
+          <div className="loading-box">
+            Loading prizes...
+          </div>
+        ) : prizes.length === 0 ? (
+          <div className="empty-box">
+            <div className="empty-icon">🎁</div>
+
+            <h3>No prizes found</h3>
+
+            <p>
+              Add your first Spin & Win prize to get started.
+            </p>
+
+            <button
+              className="add-button"
+              onClick={openAddForm}
+            >
+              + Add Prize
+            </button>
+          </div>
+        ) : (
+          <div className="table-card">
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ORDER</th>
+                    <th>PRIZE</th>
+                    <th>WEIGHT</th>
+                    <th>COUPON</th>
+                    <th>STATUS</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {prizes.map((prize) => (
+                    <tr key={prize.id}>
+                      <td>
+                        <span className="order-number">
+                          {prize.sort_order}
+                        </span>
+                      </td>
+
+                      <td>
+                        <div className="prize-name">
+                          {prize.name}
+                        </div>
+
+                        {prize.description && (
+                          <div className="prize-description">
+                            {prize.description}
+                          </div>
+                        )}
+                      </td>
+
+                      <td>
+                        <span className="weight">
+                          {prize.weight}
+                        </span>
+                      </td>
+
+                      <td>
+                        <span className="coupon-prefix">
+                          {prize.coupon_prefix || "-"}
+                        </span>
+                      </td>
+
+                      <td>
+                        <button
+                          className={
+                            prize.active
+                              ? "status active"
+                              : "status inactive"
+                          }
+                          onClick={() => togglePrize(prize)}
+                        >
+                          {prize.active
+                            ? "ACTIVE"
+                            : "INACTIVE"}
+                        </button>
+                      </td>
+
+                      <td>
+                        <div className="actions">
+                          <button
+                            className="edit-button"
+                            onClick={() =>
+                              openEditForm(prize)
+                            }
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            className="delete-button"
+                            disabled={
+                              deleting === prize.id
+                            }
+                            onClick={() =>
+                              deletePrize(prize)
+                            }
+                          >
+                            {deleting === prize.id
+                              ? "..."
+                              : "Delete"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <button
+          className="back-button"
+          onClick={() => router.push("/")}
+        >
+          ← View Spin & Win
+        </button>
+      </section>
+
+      {showForm && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <div>
+                <div className="modal-eyebrow">
+                  {editingPrize
+                    ? "EDIT PRIZE"
+                    : "NEW PRIZE"}
+                </div>
+
+                <h2>
+                  {editingPrize
+                    ? "Edit Prize"
+                    : "Add Prize"}
+                </h2>
+              </div>
+
+              <button
+                className="close-button"
+                onClick={closeForm}
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={savePrize}>
+              <div className="form-field">
+                <label>PRIZE NAME</label>
+
+                <input
+                  type="text"
+                  value={form.name}
+                  placeholder="e.g. 10% OFF"
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      name: e.target.value,
+                    })
+                  }
+                  disabled={saving}
+                />
+              </div>
+
+              <div className="form-field">
+                <label>DESCRIPTION</label>
+
+                <textarea
+                  value={form.description}
+                  placeholder="Optional prize description"
+                  rows={3}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      description: e.target.value,
+                    })
+                  }
+                  disabled={saving}
+                />
+              </div>
+
+              <div className="form-grid">
+                <div className="form-field">
+                  <label>WINNING WEIGHT</label>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.weight}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        weight: e.target.value,
+                      })
+                    }
+                    disabled={saving}
+                  />
+
+                  <small>
+                    Higher weight = higher chance.
+                  </small>
+                </div>
+
+                <div className="form-field">
+                  <label>DISPLAY ORDER</label>
+
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={form.sort_order}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        sort_order: e.target.value,
+                      })
+                    }
+                    disabled={saving}
+                  />
+
+                  <small>
+                    Controls wheel order.
+                  </small>
+                </div>
+              </div>
+
+              <div className="form-field">
+                <label>COUPON PREFIX</label>
+
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={form.coupon_prefix}
+                  placeholder="e.g. SG10"
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      coupon_prefix:
+                        e.target.value.toUpperCase(),
+                    })
+                  }
+                  disabled={saving}
+                />
+
+                <small>
+                  Example: SG10-XXXXXXXX
+                </small>
+              </div>
+
+              <div className="active-toggle">
+                <div>
+                  <strong>Prize Status</strong>
+
+                  <p>
+                    {form.active
+                      ? "This prize can be won."
+                      : "This prize is hidden from the wheel."}
                   </p>
                 </div>
 
-                <form
-                  onSubmit={savePrize}
-                  className="space-y-5 p-6"
+                <button
+                  type="button"
+                  className={
+                    form.active
+                      ? "toggle on"
+                      : "toggle"
+                  }
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      active: !form.active,
+                    })
+                  }
+                  disabled={saving}
                 >
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                      Prize Name
-                    </label>
-
-                    <input
-                      type="text"
-                      value={form.name}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          name: event.target.value,
-                        })
-                      }
-                      placeholder="e.g. 10% OFF"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                      Description
-                    </label>
-
-                    <textarea
-                      value={form.description}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          description: event.target.value,
-                        })
-                      }
-                      placeholder="Prize description"
-                      rows={3}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500"
-                    />
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                        Weight
-                      </label>
-
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={form.weight}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            weight: event.target.value,
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500"
-                      />
-
-                      <p className="mt-1 text-xs text-slate-500">
-                        Higher weight = higher chance.
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                        Sort Order
-                      </label>
-
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={form.sort_order}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            sort_order: event.target.value,
-                          })
-                        }
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                      Coupon Prefix
-                    </label>
-
-                    <input
-                      type="text"
-                      maxLength={10}
-                      value={form.coupon_prefix}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          coupon_prefix:
-                            event.target.value.toUpperCase(),
-                        })
-                      }
-                      placeholder="e.g. SG10"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm uppercase outline-none focus:border-slate-500"
-                    />
-
-                    <p className="mt-1 text-xs text-slate-500">
-                      Used when generating unique coupon codes.
-                    </p>
-                  </div>
-
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={form.active}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          active: event.target.checked,
-                        })
-                      }
-                      className="h-4 w-4 rounded border-slate-300"
-                    />
-
-                    <span className="text-sm font-medium text-slate-700">
-                      Active prize
-                    </span>
-                  </label>
-
-                  {error && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                      {error}
-                    </div>
-                  )}
-
-                  <div className="flex justify-end gap-3 border-t pt-5">
-                    <button
-                      type="button"
-                      onClick={closeForm}
-                      disabled={saving}
-                      className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {saving
-                        ? "Saving..."
-                        : editingPrize
-                        ? "Update Prize"
-                        : "Add Prize"}
-                    </button>
-                  </div>
-                </form>
+                  <span />
+                </button>
               </div>
-            </div>
-          )}
-        </>
+
+              {error && (
+                <div className="form-error">
+                  {error}
+                </div>
+              )}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="cancel-button"
+                  onClick={closeForm}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="save-button"
+                  disabled={saving}
+                >
+                  {saving
+                    ? "SAVING..."
+                    : editingPrize
+                    ? "SAVE CHANGES"
+                    : "ADD PRIZE"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
+
+      <style jsx>{`
+        .admin-page {
+          min-height: 100vh;
+          background: #f5f5f5;
+        }
+
+        .admin-header {
+          min-height: 70px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 28px;
+          box-sizing: border-box;
+          background: white;
+          border-bottom: 1px solid #e7e7e7;
+        }
+
+        .header-brand {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .header-mark {
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 9px;
+          background: #e31b23;
+          color: white;
+          font-size: 23px;
+          font-weight: 900;
+        }
+
+        .header-name {
+          font-size: 18px;
+          font-weight: 950;
+          letter-spacing: 1px;
+        }
+
+        .header-subtitle {
+          margin-top: 1px;
+          color: #e31b23;
+          font-size: 8px;
+          font-weight: 900;
+          letter-spacing: 2px;
+        }
+
+        .header-right {
+          display: flex;
+          align-items: center;
+          gap: 15px;
+        }
+
+        .admin-email {
+          color: #777;
+          font-size: 12px;
+        }
+
+        .header-right button {
+          padding: 9px 15px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          background: white;
+          color: #333;
+          font-size: 12px;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .dashboard {
+          width: 100%;
+          max-width: 1200px;
+          margin: auto;
+          padding: 42px 25px 60px;
+          box-sizing: border-box;
+        }
+
+        .welcome {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 20px;
+        }
+
+        .eyebrow,
+        .modal-eyebrow {
+          color: #e31b23;
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: 1.5px;
+        }
+
+        .welcome h1 {
+          margin: 7px 0 5px;
+          font-size: 34px;
+          font-weight: 950;
+        }
+
+        .welcome p {
+          margin: 0;
+          color: #777;
+          font-size: 15px;
+        }
+
+        .add-button {
+          border: none;
+          border-radius: 10px;
+          padding: 12px 18px;
+          background: #e31b23;
+          color: white;
+          font-size: 13px;
+          font-weight: 900;
+          cursor: pointer;
+          box-shadow: 0 6px 16px rgba(227, 27, 35, 0.2);
+          white-space: nowrap;
+        }
+
+        .add-button:hover {
+          transform: translateY(-1px);
+        }
+
+        .success-message,
+        .error-message {
+          margin-top: 22px;
+          padding: 12px 15px;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .success-message {
+          background: #edf9f0;
+          color: #24733b;
+          border: 1px solid #ccebd3;
+        }
+
+        .error-message {
+          background: #fff1f1;
+          color: #c5161d;
+          border: 1px solid #f4cccc;
+        }
+
+        /* =====================================================
+           STAGE 3A - OVERVIEW
+        ====================================================== */
+
+        .overview-header {
+          margin-top: 35px;
+          margin-bottom: 16px;
+        }
+
+        .overview-header h2 {
+          margin: 6px 0 4px;
+          font-size: 21px;
+        }
+
+        .overview-header p {
+          margin: 0;
+          color: #888;
+          font-size: 13px;
+        }
+
+        .overview-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 15px;
+        }
+
+        .overview-card {
+          min-height: 125px;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 20px;
+          box-sizing: border-box;
+          border-radius: 15px;
+          background: white;
+          border: 1px solid #eeeeee;
+          box-shadow: 0 6px 25px rgba(0, 0, 0, 0.04);
+        }
+
+        .overview-icon {
+          width: 48px;
+          height: 48px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 12px;
+          background: #fff1f1;
+          color: #e31b23;
+          font-size: 22px;
+          font-weight: 900;
+        }
+
+        .active-icon {
+          background: #edf9f0;
+          color: #24733b;
+        }
+
+        .inactive-icon {
+          background: #f1f1f1;
+          color: #888;
+        }
+
+        .weight-icon {
+          background: #f5f5f5;
+          color: #333;
+        }
+
+        .overview-label {
+          color: #999;
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 1px;
+        }
+
+        .overview-value {
+          margin-top: 4px;
+          color: #222;
+          font-size: 28px;
+          line-height: 1;
+          font-weight: 950;
+        }
+
+        .overview-description {
+          margin-top: 7px;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .weight-info {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          margin-top: 15px;
+          padding: 12px 15px;
+          border: 1px solid #e8e8e8;
+          border-radius: 10px;
+          background: white;
+        }
+
+        .weight-info-icon {
+          width: 20px;
+          height: 20px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          background: #f0f0f0;
+          color: #777;
+          font-size: 11px;
+          font-weight: 900;
+        }
+
+        .weight-info strong {
+          color: #555;
+          font-size: 11px;
+        }
+
+        .weight-info p {
+          margin: 3px 0 0;
+          color: #999;
+          font-size: 10px;
+        }
+
+        /* =====================================================
+           PRIZE MANAGEMENT
+        ====================================================== */
+
+        .section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin: 35px 0 15px;
+        }
+
+        .section-header h2 {
+          margin: 0 0 4px;
+          font-size: 21px;
+        }
+
+        .section-header p {
+          margin: 0;
+          color: #888;
+          font-size: 13px;
+        }
+
+        .prize-count {
+          padding: 7px 11px;
+          border-radius: 20px;
+          background: white;
+          color: #777;
+          font-size: 11px;
+          font-weight: 800;
+          border: 1px solid #e5e5e5;
+        }
+
+        .table-card {
+          overflow: hidden;
+          border-radius: 16px;
+          background: white;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+        }
+
+        .table-wrapper {
+          overflow-x: auto;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 850px;
+        }
+
+        th {
+          padding: 15px 18px;
+          background: #fafafa;
+          border-bottom: 1px solid #eee;
+          color: #888;
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 1px;
+          text-align: left;
+        }
+
+        td {
+          padding: 17px 18px;
+          border-bottom: 1px solid #f0f0f0;
+          vertical-align: middle;
+        }
+
+        tr:last-child td {
+          border-bottom: none;
+        }
+
+        .order-number {
+          display: inline-flex;
+          width: 30px;
+          height: 30px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+          background: #f5f5f5;
+          color: #555;
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .prize-name {
+          color: #222;
+          font-size: 14px;
+          font-weight: 850;
+        }
+
+        .prize-description {
+          margin-top: 4px;
+          color: #999;
+          font-size: 11px;
+        }
+
+        .weight {
+          display: inline-flex;
+          min-width: 42px;
+          justify-content: center;
+          padding: 7px 9px;
+          border-radius: 7px;
+          background: #f7f7f7;
+          color: #333;
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .coupon-prefix {
+          display: inline-block;
+          padding: 6px 9px;
+          border-radius: 7px;
+          background: #fff5f5;
+          color: #c5161d;
+          font-family: monospace;
+          font-size: 11px;
+          font-weight: 900;
+        }
+
+        .status {
+          padding: 7px 10px;
+          border: none;
+          border-radius: 20px;
+          font-size: 9px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .status.active {
+          background: #edf9f0;
+          color: #24733b;
+        }
+
+        .status.inactive {
+          background: #f1f1f1;
+          color: #888;
+        }
+
+        .actions {
+          display: flex;
+          gap: 7px;
+        }
+
+        .edit-button,
+        .delete-button {
+          padding: 7px 10px;
+          border-radius: 7px;
+          font-size: 10px;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .edit-button {
+          border: 1px solid #ddd;
+          background: white;
+          color: #444;
+        }
+
+        .delete-button {
+          border: 1px solid #f0cccc;
+          background: #fff7f7;
+          color: #c5161d;
+        }
+
+        .delete-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .loading-box,
+        .empty-box {
+          padding: 60px 20px;
+          border-radius: 16px;
+          background: white;
+          text-align: center;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
+        }
+
+        .loading-box {
+          color: #888;
+          font-size: 14px;
+        }
+
+        .empty-icon {
+          font-size: 40px;
+        }
+
+        .empty-box h3 {
+          margin: 15px 0 6px;
+        }
+
+        .empty-box p {
+          margin: 0 0 20px;
+          color: #888;
+          font-size: 13px;
+        }
+
+        .back-button {
+          display: block;
+          margin: 25px auto;
+          padding: 12px 20px;
+          border: 1px solid #ddd;
+          border-radius: 10px;
+          background: white;
+          color: #444;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        /* =====================================================
+           MODAL
+        ====================================================== */
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          box-sizing: border-box;
+          background: rgba(0, 0, 0, 0.48);
+        }
+
+        .modal {
+          width: 100%;
+          max-width: 560px;
+          max-height: 92vh;
+          overflow-y: auto;
+          padding: 28px;
+          box-sizing: border-box;
+          border-radius: 20px;
+          background: white;
+          box-shadow: 0 25px 80px rgba(0, 0, 0, 0.25);
+        }
+
+        .modal-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          margin-bottom: 25px;
+        }
+
+        .modal-header h2 {
+          margin: 5px 0 0;
+          font-size: 25px;
+        }
+
+        .close-button {
+          width: 34px;
+          height: 34px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          background: white;
+          color: #666;
+          font-size: 22px;
+          cursor: pointer;
+        }
+
+        .form-field {
+          margin-bottom: 17px;
+        }
+
+        .form-field label {
+          display: block;
+          margin-bottom: 7px;
+          color: #333;
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 0.8px;
+        }
+
+        .form-field input,
+        .form-field textarea {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 12px;
+          border: 1px solid #ddd;
+          border-radius: 9px;
+          background: white;
+          color: #222;
+          font-family: inherit;
+          font-size: 14px;
+          outline: none;
+        }
+
+        .form-field textarea {
+          resize: vertical;
+        }
+
+        .form-field input:focus,
+        .form-field textarea:focus {
+          border-color: #e31b23;
+          box-shadow: 0 0 0 3px rgba(227, 27, 35, 0.07);
+        }
+
+        .form-field small {
+          display: block;
+          margin-top: 5px;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .form-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 15px;
+        }
+
+        .active-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+          margin: 8px 0 20px;
+          padding: 14px;
+          border-radius: 10px;
+          background: #f8f8f8;
+        }
+
+        .active-toggle strong {
+          font-size: 13px;
+        }
+
+        .active-toggle p {
+          margin: 3px 0 0;
+          color: #888;
+          font-size: 11px;
+        }
+
+        .toggle {
+          width: 48px;
+          height: 27px;
+          padding: 3px;
+          border: none;
+          border-radius: 20px;
+          background: #ccc;
+          cursor: pointer;
+          transition: 0.2s;
+        }
+
+        .toggle span {
+          display: block;
+          width: 21px;
+          height: 21px;
+          border-radius: 50%;
+          background: white;
+          transition: 0.2s;
+        }
+
+        .toggle.on {
+          background: #e31b23;
+        }
+
+        .toggle.on span {
+          transform: translateX(21px);
+        }
+
+        .form-error {
+          margin-bottom: 15px;
+          padding: 10px;
+          border-radius: 8px;
+          background: #fff1f1;
+          color: #c5161d;
+          font-size: 12px;
+        }
+
+        .modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          padding-top: 5px;
+        }
+
+        .cancel-button,
+        .save-button {
+          padding: 12px 17px;
+          border-radius: 9px;
+          font-size: 12px;
+          font-weight: 900;
+          cursor: pointer;
+        }
+
+        .cancel-button {
+          border: 1px solid #ddd;
+          background: white;
+          color: #555;
+        }
+
+        .save-button {
+          border: none;
+          background: #e31b23;
+          color: white;
+        }
+
+        .cancel-button:disabled,
+        .save-button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        /* =====================================================
+           MOBILE
+        ====================================================== */
+
+        @media (max-width: 950px) {
+          .overview-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+
+        @media (max-width: 650px) {
+          .admin-header {
+            padding: 12px 15px;
+          }
+
+          .admin-email {
+            display: none;
+          }
+
+          .dashboard {
+            padding: 30px 15px 50px;
+          }
+
+          .welcome {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .welcome h1 {
+            font-size: 28px;
+          }
+
+          .add-button {
+            width: 100%;
+          }
+
+          .overview-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .overview-card {
+            min-height: 105px;
+          }
+
+          .section-header {
+            align-items: flex-start;
+            gap: 10px;
+          }
+
+          .form-grid {
+            grid-template-columns: 1fr;
+            gap: 0;
+          }
+
+          .modal {
+            padding: 22px 18px;
+            border-radius: 17px;
+          }
+        }
+      `}</style>
     </main>
   );
 }
