@@ -1,10 +1,19 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
-type ActiveTab = "overview" | "prizes" | "history";
+type ActiveTab =
+  | "overview"
+  | "prizes"
+  | "history"
+  | "statistics";
 
 type Prize = {
   id: string;
@@ -49,6 +58,13 @@ type CouponInfo = {
   status: string;
 };
 
+type StatisticsData = {
+  totalSpins: number;
+  totalCoupons: number;
+  issuedCoupons: number;
+  redeemedCoupons: number;
+};
+
 const emptyForm: PrizeForm = {
   name: "",
   description: "",
@@ -71,19 +87,48 @@ export default function AdminDashboard() {
     useState(false);
 
   const [prizes, setPrizes] = useState<Prize[]>([]);
-  const [loadingPrizes, setLoadingPrizes] = useState(false);
+  const [loadingPrizes, setLoadingPrizes] =
+    useState(false);
 
-  const [history, setHistory] = useState<SpinHistory[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  const [historyError, setHistoryError] = useState("");
+  const [history, setHistory] = useState<SpinHistory[]>(
+    []
+  );
+  const [loadingHistory, setLoadingHistory] =
+    useState(false);
+  const [historyError, setHistoryError] =
+    useState("");
+
+  const [historySearch, setHistorySearch] =
+    useState("");
+  const [historyPrizeFilter, setHistoryPrizeFilter] =
+    useState("all");
+  const [historyStatusFilter, setHistoryStatusFilter] =
+    useState("all");
+  const [historyDateFilter, setHistoryDateFilter] =
+    useState("all");
+
+  const [statistics, setStatistics] =
+    useState<StatisticsData>({
+      totalSpins: 0,
+      totalCoupons: 0,
+      issuedCoupons: 0,
+      redeemedCoupons: 0,
+    });
+
+  const [loadingStatistics, setLoadingStatistics] =
+    useState(false);
+  const [statisticsError, setStatisticsError] =
+    useState("");
 
   const [showForm, setShowForm] = useState(false);
   const [editingPrize, setEditingPrize] =
     useState<Prize | null>(null);
-  const [form, setForm] = useState<PrizeForm>(emptyForm);
+  const [form, setForm] =
+    useState<PrizeForm>(emptyForm);
 
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] =
+    useState<string | null>(null);
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -102,12 +147,14 @@ export default function AdminDashboard() {
       return;
     }
 
-    const { data: admin, error: adminError } =
-      await supabase
-        .from("admin_users")
-        .select("user_id")
-        .eq("user_id", session.user.id)
-        .maybeSingle();
+    const {
+      data: admin,
+      error: adminError,
+    } = await supabase
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id", session.user.id)
+      .maybeSingle();
 
     if (adminError || !admin) {
       await supabase.auth.signOut();
@@ -121,6 +168,7 @@ export default function AdminDashboard() {
     await Promise.all([
       loadPrizes(),
       loadHistory(),
+      loadStatistics(),
     ]);
   }
 
@@ -152,23 +200,27 @@ export default function AdminDashboard() {
     setLoadingHistory(true);
     setHistoryError("");
 
-    const { data: spinsData, error: spinsError } =
-      await supabase
-        .from("spins")
-        .select(
-          "id,mobile,prize_id,coupon_id,created_at"
-        )
-        .order("created_at", {
-          ascending: false,
-        })
-        .limit(100);
+    const {
+      data: spinsData,
+      error: spinsError,
+    } = await supabase
+      .from("spins")
+      .select(
+        "id,mobile,prize_id,coupon_id,created_at"
+      )
+      .order("created_at", {
+        ascending: false,
+      })
+      .limit(100);
 
     if (spinsError) {
       console.error(spinsError);
+
       setHistoryError(
         spinsError.message ||
           "Unable to load spin history."
       );
+
       setHistory([]);
       setLoadingHistory(false);
       return;
@@ -198,18 +250,20 @@ export default function AdminDashboard() {
       )
     );
 
-    const [prizesResult, couponsResult] =
-      await Promise.all([
-        supabase
-          .from("prizes")
-          .select("id,name")
-          .in("id", prizeIds),
+    const [
+      prizesResult,
+      couponsResult,
+    ] = await Promise.all([
+      supabase
+        .from("prizes")
+        .select("id,name")
+        .in("id", prizeIds),
 
-        supabase
-          .from("coupons")
-          .select("id,code,status")
-          .in("id", couponIds),
-      ]);
+      supabase
+        .from("coupons")
+        .select("id,code,status")
+        .in("id", couponIds),
+    ]);
 
     if (prizesResult.error) {
       console.error(prizesResult.error);
@@ -258,8 +312,8 @@ export default function AdminDashboard() {
       )
     );
 
-    const combined: SpinHistory[] = spins.map(
-      (spin) => {
+    const combined: SpinHistory[] =
+      spins.map((spin) => {
         const coupon = couponMap.get(
           spin.coupon_id
         );
@@ -279,11 +333,105 @@ export default function AdminDashboard() {
           coupon_status:
             coupon?.status || "unknown",
         };
-      }
-    );
+      });
 
     setHistory(combined);
     setLoadingHistory(false);
+  }
+
+  async function loadStatistics() {
+    setLoadingStatistics(true);
+    setStatisticsError("");
+
+    const [
+      spinsCountResult,
+      couponsCountResult,
+      couponsStatusResult,
+    ] = await Promise.all([
+      supabase
+        .from("spins")
+        .select("id", {
+          count: "exact",
+          head: true,
+        }),
+
+      supabase
+        .from("coupons")
+        .select("id", {
+          count: "exact",
+          head: true,
+        }),
+
+      supabase
+        .from("coupons")
+        .select("id,status"),
+    ]);
+
+    if (spinsCountResult.error) {
+      console.error(spinsCountResult.error);
+
+      setStatisticsError(
+        spinsCountResult.error.message ||
+          "Unable to load spin statistics."
+      );
+
+      setLoadingStatistics(false);
+      return;
+    }
+
+    if (couponsCountResult.error) {
+      console.error(
+        couponsCountResult.error
+      );
+
+      setStatisticsError(
+        couponsCountResult.error.message ||
+          "Unable to load coupon statistics."
+      );
+
+      setLoadingStatistics(false);
+      return;
+    }
+
+    if (couponsStatusResult.error) {
+      console.error(
+        couponsStatusResult.error
+      );
+
+      setStatisticsError(
+        couponsStatusResult.error.message ||
+          "Unable to load coupon status statistics."
+      );
+
+      setLoadingStatistics(false);
+      return;
+    }
+
+    const coupons =
+      couponsStatusResult.data || [];
+
+    const issuedCoupons = coupons.filter(
+      (coupon) =>
+        String(coupon.status).toLowerCase() ===
+        "issued"
+    ).length;
+
+    const redeemedCoupons = coupons.filter(
+      (coupon) =>
+        String(coupon.status).toLowerCase() ===
+        "redeemed"
+    ).length;
+
+    setStatistics({
+      totalSpins:
+        spinsCountResult.count || 0,
+      totalCoupons:
+        couponsCountResult.count || 0,
+      issuedCoupons,
+      redeemedCoupons,
+    });
+
+    setLoadingStatistics(false);
   }
 
   function openAddForm() {
@@ -291,7 +439,9 @@ export default function AdminDashboard() {
 
     setForm({
       ...emptyForm,
-      sort_order: String(prizes.length + 1),
+      sort_order: String(
+        prizes.length + 1
+      ),
     });
 
     setMessage("");
@@ -304,11 +454,14 @@ export default function AdminDashboard() {
 
     setForm({
       name: prize.name,
-      description: prize.description || "",
+      description:
+        prize.description || "",
       weight: String(prize.weight),
       coupon_prefix:
         prize.coupon_prefix || "",
-      sort_order: String(prize.sort_order),
+      sort_order: String(
+        prize.sort_order
+      ),
       active: prize.active,
     });
 
@@ -334,6 +487,7 @@ export default function AdminDashboard() {
     setMessage("");
 
     const name = form.name.trim();
+
     const description =
       form.description.trim();
 
@@ -343,10 +497,14 @@ export default function AdminDashboard() {
         .toUpperCase();
 
     const weight = Number(form.weight);
-    const sortOrder = Number(form.sort_order);
+    const sortOrder = Number(
+      form.sort_order
+    );
 
     if (!name) {
-      setError("Please enter a prize name.");
+      setError(
+        "Please enter a prize name."
+      );
       return;
     }
 
@@ -396,9 +554,13 @@ export default function AdminDashboard() {
           weight,
           active: form.active,
           sort_order: sortOrder,
-          coupon_prefix: couponPrefix,
+          coupon_prefix:
+            couponPrefix,
         })
-        .eq("id", editingPrize.id);
+        .eq(
+          "id",
+          editingPrize.id
+        );
 
       if (error) {
         console.error(error);
@@ -425,7 +587,8 @@ export default function AdminDashboard() {
           weight,
           active: form.active,
           sort_order: sortOrder,
-          coupon_prefix: couponPrefix,
+          coupon_prefix:
+            couponPrefix,
         });
 
       if (error) {
@@ -451,9 +614,12 @@ export default function AdminDashboard() {
     setForm(emptyForm);
 
     await loadPrizes();
+    await loadStatistics();
   }
 
-  async function togglePrize(prize: Prize) {
+  async function togglePrize(
+    prize: Prize
+  ) {
     setError("");
     setMessage("");
 
@@ -486,10 +652,13 @@ export default function AdminDashboard() {
     await loadPrizes();
   }
 
-  async function deletePrize(prize: Prize) {
-    const confirmed = window.confirm(
-      `Delete "${prize.name}"?\n\nThis action cannot be undone.`
-    );
+  async function deletePrize(
+    prize: Prize
+  ) {
+    const confirmed =
+      window.confirm(
+        `Delete "${prize.name}"?\n\nThis action cannot be undone.`
+      );
 
     if (!confirmed) return;
 
@@ -528,91 +697,224 @@ export default function AdminDashboard() {
     router.replace("/admin/login");
   }
 
-  function selectTab(tab: ActiveTab) {
+  function selectTab(
+    tab: ActiveTab
+  ) {
     setActiveTab(tab);
     setMobileSidebarOpen(false);
     setMessage("");
     setError("");
-  }
 
-  function maskMobile(mobile: string) {
-    if (!mobile) return "-";
-
-    if (mobile.length <= 6) {
-      return mobile;
+    if (tab === "history") {
+      loadHistory();
     }
 
-    return `${mobile.slice(
-      0,
-      4
-    )}••••${mobile.slice(-3)}`;
+    if (tab === "statistics") {
+      loadStatistics();
+      loadHistory();
+    }
   }
 
-  function formatDateTime(value: string) {
+  function clearHistoryFilters() {
+    setHistorySearch("");
+    setHistoryPrizeFilter("all");
+    setHistoryStatusFilter("all");
+    setHistoryDateFilter("all");
+  }
+
+  function isWithinDateFilter(
+    value: string,
+    filter: string
+  ) {
+    if (filter === "all") {
+      return true;
+    }
+
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-      return value;
+      return false;
     }
 
-    return date.toLocaleString(
-      "en-LK",
-      {
-        dateStyle: "medium",
-        timeStyle: "short",
+    const now = new Date();
+
+    if (filter === "today") {
+      return (
+        date.getFullYear() ===
+          now.getFullYear() &&
+        date.getMonth() ===
+          now.getMonth() &&
+        date.getDate() ===
+          now.getDate()
+      );
+    }
+
+    const days =
+      filter === "7days"
+        ? 7
+        : filter === "30days"
+        ? 30
+        : 0;
+
+    if (days === 0) {
+      return true;
+    }
+
+    const cutoff = new Date(
+      now.getTime()
+    );
+
+    cutoff.setDate(
+      cutoff.getDate() - days
+    );
+
+    return date >= cutoff;
+  }
+
+  const filteredHistory = useMemo(() => {
+    const search =
+      historySearch
+        .trim()
+        .toLowerCase();
+
+    return history.filter(
+      (record) => {
+        const matchesSearch =
+          !search ||
+          record.mobile
+            .toLowerCase()
+            .includes(search) ||
+          record.coupon_code
+            .toLowerCase()
+            .includes(search) ||
+          record.prize_name
+            .toLowerCase()
+            .includes(search);
+
+        const matchesPrize =
+          historyPrizeFilter ===
+            "all" ||
+          record.prize_id ===
+            historyPrizeFilter;
+
+        const matchesStatus =
+          historyStatusFilter ===
+            "all" ||
+          record.coupon_status
+            .toLowerCase() ===
+            historyStatusFilter.toLowerCase();
+
+        const matchesDate =
+          isWithinDateFilter(
+            record.created_at,
+            historyDateFilter
+          );
+
+        return (
+          matchesSearch &&
+          matchesPrize &&
+          matchesStatus &&
+          matchesDate
+        );
       }
     );
-  }
+  }, [
+    history,
+    historySearch,
+    historyPrizeFilter,
+    historyStatusFilter,
+    historyDateFilter,
+  ]);
 
-  function getStatusClass(status: string) {
-    const normalized =
-      status.toLowerCase();
+  const prizeDistribution =
+    useMemo(() => {
+      const distribution = prizes.map(
+        (prize) => {
+          const count =
+            history.filter(
+              (record) =>
+                record.prize_id ===
+                prize.id
+            ).length;
 
-    if (
-      normalized === "issued" ||
-      normalized === "active"
-    ) {
-      return "history-status issued";
-    }
+          return {
+            id: prize.id,
+            name: prize.name,
+            count,
+          };
+        }
+      );
 
-    if (
-      normalized === "redeemed"
-    ) {
-      return "history-status redeemed";
-    }
+      return distribution
+        .filter(
+          (item) => item.count > 0
+        )
+        .sort(
+          (a, b) =>
+            b.count - a.count
+        );
+    }, [history, prizes]);
 
-    return "history-status other";
-  }
+  const totalDistributionSpins =
+    prizeDistribution.reduce(
+      (total, item) =>
+        total + item.count,
+      0
+    );
 
   const totalPrizes = prizes.length;
 
-  const activePrizes = prizes.filter(
-    (prize) => prize.active
-  ).length;
+  const activePrizes =
+    prizes.filter(
+      (prize) => prize.active
+    ).length;
 
-  const inactivePrizes = prizes.filter(
-    (prize) => !prize.active
-  ).length;
+  const inactivePrizes =
+    prizes.filter(
+      (prize) => !prize.active
+    ).length;
 
   const totalWinningWeight =
     prizes.reduce(
       (total, prize) =>
         total +
-        Number(prize.weight || 0),
+        Number(
+          prize.weight || 0
+        ),
       0
     );
 
   const activeWinningWeight =
     prizes
-      .filter((prize) => prize.active)
+      .filter(
+        (prize) => prize.active
+      )
       .reduce(
         (total, prize) =>
           total +
-          Number(prize.weight || 0),
+          Number(
+            prize.weight || 0
+          ),
         0
       );
 
-  const totalSpins = history.length;
+  const issuedPercentage =
+    statistics.totalCoupons > 0
+      ? Math.round(
+          (statistics.issuedCoupons /
+            statistics.totalCoupons) *
+            100
+        )
+      : 0;
+
+  const redeemedPercentage =
+    statistics.totalCoupons > 0
+      ? Math.round(
+          (statistics.redeemedCoupons /
+            statistics.totalCoupons) *
+            100
+        )
+      : 0;
 
   if (checking) {
     return (
@@ -623,7 +925,8 @@ export default function AdminDashboard() {
           </div>
 
           <p>
-            Checking administrator access...
+            Checking administrator
+            access...
           </p>
         </div>
 
@@ -661,446 +964,592 @@ export default function AdminDashboard() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header">
-        <div className="header-brand">
-          <div className="header-mark">
-            S
-          </div>
-
-          <div>
-            <div className="header-name">
-              SINGHAGIRI
-            </div>
-
-            <div className="header-subtitle">
-              SPIN & WIN ADMIN
-            </div>
-          </div>
-        </div>
-
-        <div className="header-right">
-          <span className="admin-email">
-            {email}
-          </span>
-
-          <button
-            onClick={logout}
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-
-      <div className="admin-layout">
-        <aside
-          className={`sidebar ${
-            mobileSidebarOpen
-              ? "sidebar-open"
-              : ""
-          }`}
-        >
-          <div className="sidebar-brand">
-            <div className="sidebar-mark">
+      <aside
+        className={
+          mobileSidebarOpen
+            ? "sidebar open"
+            : "sidebar"
+        }
+      >
+        <div className="sidebar-top">
+          <div className="sidebar-logo">
+            <div className="logo-mark">
               S
             </div>
 
             <div>
-              <div className="sidebar-name">
+              <div className="brand-name">
                 SINGHAGIRI
               </div>
 
-              <div className="sidebar-subtitle">
+              <div className="brand-subtitle">
                 SPIN & WIN
               </div>
             </div>
           </div>
 
-          <div className="sidebar-divider" />
-
-          <div className="sidebar-label">
-            CAMPAIGN
-          </div>
-
-          <nav className="sidebar-nav">
-            <button
-              className={
-                activeTab === "overview"
-                  ? "nav-item active"
-                  : "nav-item"
-              }
-              onClick={() =>
-                selectTab("overview")
-              }
-            >
-              <span className="nav-icon">
-                ◈
-              </span>
-
-              <span>
-                Overview
-              </span>
-            </button>
-
-            <button
-              className={
-                activeTab === "prizes"
-                  ? "nav-item active"
-                  : "nav-item"
-              }
-              onClick={() =>
-                selectTab("prizes")
-              }
-            >
-              <span className="nav-icon">
-                🎁
-              </span>
-
-              <span>
-                Prize Management
-              </span>
-            </button>
-
-            <button
-              className={
-                activeTab === "history"
-                  ? "nav-item active"
-                  : "nav-item"
-              }
-              onClick={() =>
-                selectTab("history")
-              }
-            >
-              <span className="nav-icon">
-                🏆
-              </span>
-
-              <span>
-                Winner History
-              </span>
-            </button>
-          </nav>
-
-          <div className="sidebar-bottom">
-            <div className="sidebar-divider" />
-
-            <button
-              className="sidebar-action"
-              onClick={() =>
-                router.push("/")
-              }
-            >
-              <span>↩</span>
-              <span>
-                View Spin & Win
-              </span>
-            </button>
-
-            <button
-              className="sidebar-action logout-action"
-              onClick={logout}
-            >
-              <span>⇥</span>
-              <span>
-                Logout
-              </span>
-            </button>
-          </div>
-        </aside>
-
-        {mobileSidebarOpen && (
-          <div
-            className="sidebar-overlay"
+          <button
+            className="mobile-close"
             onClick={() =>
               setMobileSidebarOpen(false)
             }
-          />
-        )}
+            aria-label="Close menu"
+          >
+            ×
+          </button>
+        </div>
 
-        <section className="admin-content">
-          <div className="mobile-toolbar">
+        <div className="sidebar-label">
+          ADMIN PANEL
+        </div>
+
+        <nav className="sidebar-nav">
+          <button
+            className={
+              activeTab === "overview"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() =>
+              selectTab("overview")
+            }
+          >
+            <span className="nav-icon">
+              ◈
+            </span>
+            <span>Overview</span>
+          </button>
+
+          <button
+            className={
+              activeTab === "prizes"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() =>
+              selectTab("prizes")
+            }
+          >
+            <span className="nav-icon">
+              🎁
+            </span>
+            <span>
+              Prize Management
+            </span>
+          </button>
+
+          <button
+            className={
+              activeTab === "history"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() =>
+              selectTab("history")
+            }
+          >
+            <span className="nav-icon">
+              🏆
+            </span>
+            <span>
+              Winner History
+            </span>
+          </button>
+
+          <button
+            className={
+              activeTab === "statistics"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() =>
+              selectTab("statistics")
+            }
+          >
+            <span className="nav-icon">
+              📊
+            </span>
+            <span>Statistics</span>
+          </button>
+        </nav>
+
+        <div className="sidebar-bottom">
+          <div className="admin-user">
+            <div className="user-avatar">
+              {email
+                ? email
+                    .charAt(0)
+                    .toUpperCase()
+                : "A"}
+            </div>
+
+            <div className="user-details">
+              <div className="user-label">
+                ADMINISTRATOR
+              </div>
+
+              <div className="user-email">
+                {email || "Admin"}
+              </div>
+            </div>
+          </div>
+
+          <button
+            className="logout-button"
+            onClick={logout}
+          >
+            <span>↪</span>
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      {mobileSidebarOpen && (
+        <button
+          className="sidebar-overlay"
+          onClick={() =>
+            setMobileSidebarOpen(false)
+          }
+          aria-label="Close sidebar"
+        />
+      )}
+
+      <section className="main-area">
+        <header className="admin-header">
+          <div className="header-left">
             <button
-              className="mobile-menu-button"
+              className="mobile-menu"
               onClick={() =>
-                setMobileSidebarOpen(
-                  !mobileSidebarOpen
-                )
+                setMobileSidebarOpen(true)
               }
+              aria-label="Open menu"
             >
               ☰
             </button>
 
             <div>
-              <div className="mobile-toolbar-title">
-                SINGHAGIRI
-              </div>
+              <h1>
+                {activeTab ===
+                  "overview" &&
+                  "Dashboard Overview"}
 
-              <div className="mobile-toolbar-subtitle">
-                SPIN & WIN ADMIN
-              </div>
+                {activeTab ===
+                  "prizes" &&
+                  "Prize Management"}
+
+                {activeTab ===
+                  "history" &&
+                  "Winner History"}
+
+                {activeTab ===
+                  "statistics" &&
+                  "Statistics"}
+              </h1>
+
+              <p>
+                Manage your Singhagiri
+                Spin & Win campaign
+              </p>
             </div>
           </div>
+
+          <div className="header-right">
+            <div className="header-email">
+              {email}
+            </div>
+
+            <div className="header-status">
+              <span className="status-dot" />
+              System Active
+            </div>
+          </div>
+        </header>
+
+        <div className="content">
+          {message && (
+            <div className="alert success">
+              <span>✓</span>
+              <span>{message}</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="alert error">
+              <span>!</span>
+              <span>{error}</span>
+            </div>
+          )}
 
           {activeTab === "overview" && (
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">
-                    ADMINISTRATION
-                  </div>
-
-                  <h1>
-                    Spin & Win Dashboard
-                  </h1>
+                  <h2>
+                    Campaign Overview
+                  </h2>
 
                   <p>
-                    Manage and monitor your
-                    Singhagiri Spin & Win
+                    Current configuration
+                    of your Spin & Win
                     campaign.
                   </p>
                 </div>
               </div>
 
-              {message && (
-                <div className="success-message">
-                  ✓ {message}
-                </div>
-              )}
-
-              {error && (
-                <div className="error-message">
-                  ! {error}
-                </div>
-              )}
-
-              <div className="overview-header">
-                <div>
-                  <div className="eyebrow">
-                    CAMPAIGN OVERVIEW
-                  </div>
-
-                  <h2>
-                    Campaign Summary
-                  </h2>
-
-                  <p>
-                    Quick summary of your
-                    current Spin & Win
-                    configuration.
-                  </p>
-                </div>
-              </div>
-
-              <div className="overview-grid">
-                <div className="overview-card">
-                  <div className="overview-icon">
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <div className="stat-icon">
                     🎁
                   </div>
 
-                  <div className="overview-content">
-                    <div className="overview-label">
+                  <div>
+                    <div className="stat-label">
                       TOTAL PRIZES
                     </div>
 
-                    <div className="overview-value">
+                    <div className="stat-value">
                       {totalPrizes}
                     </div>
 
-                    <div className="overview-description">
-                      All configured prizes
+                    <div className="stat-note">
+                      All configured
+                      prizes
                     </div>
                   </div>
                 </div>
 
-                <div className="overview-card">
-                  <div className="overview-icon active-icon">
+                <div className="stat-card">
+                  <div className="stat-icon green">
                     ✓
                   </div>
 
-                  <div className="overview-content">
-                    <div className="overview-label">
+                  <div>
+                    <div className="stat-label">
                       ACTIVE PRIZES
                     </div>
 
-                    <div className="overview-value">
+                    <div className="stat-value">
                       {activePrizes}
                     </div>
 
-                    <div className="overview-description">
+                    <div className="stat-note">
                       Currently available
-                      on wheel
                     </div>
                   </div>
                 </div>
 
-                <div className="overview-card">
-                  <div className="overview-icon inactive-icon">
+                <div className="stat-card">
+                  <div className="stat-icon gray">
                     ○
                   </div>
 
-                  <div className="overview-content">
-                    <div className="overview-label">
+                  <div>
+                    <div className="stat-label">
                       INACTIVE PRIZES
                     </div>
 
-                    <div className="overview-value">
+                    <div className="stat-value">
                       {inactivePrizes}
                     </div>
 
-                    <div className="overview-description">
-                      Currently disabled
+                    <div className="stat-note">
+                      Not available
                     </div>
                   </div>
                 </div>
 
-                <div className="overview-card">
-                  <div className="overview-icon weight-icon">
-                    %
+                <div className="stat-card">
+                  <div className="stat-icon red">
+                    🎯
                   </div>
 
-                  <div className="overview-content">
-                    <div className="overview-label">
+                  <div>
+                    <div className="stat-label">
                       ACTIVE WEIGHT
                     </div>
 
-                    <div className="overview-value">
+                    <div className="stat-value">
                       {activeWinningWeight}
                     </div>
 
-                    <div className="overview-description">
-                      Total active winning
+                    <div className="stat-note">
+                      Total winning
                       weight
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="overview-grid secondary-overview">
-                <div className="overview-card">
-                  <div className="overview-icon spin-icon">
-                    ↻
+              <div className="two-column">
+                <div className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <h3>
+                        Winning Probability
+                      </h3>
+
+                      <p>
+                        Probability is
+                        calculated from
+                        the active prize
+                        weights.
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="overview-content">
-                    <div className="overview-label">
-                      TOTAL SPINS
-                    </div>
+                  <div className="probability-list">
+                    {prizes.length ===
+                    0 ? (
+                      <div className="empty-state small">
+                        No prizes
+                        configured.
+                      </div>
+                    ) : (
+                      prizes.map(
+                        (prize) => {
+                          const weight =
+                            Number(
+                              prize.weight ||
+                                0
+                            );
 
-                    <div className="overview-value">
-                      {totalSpins}
-                    </div>
+                          const probability =
+                            prize.active &&
+                            activeWinningWeight >
+                              0
+                              ? (weight /
+                                  activeWinningWeight) *
+                                100
+                              : 0;
 
-                    <div className="overview-description">
-                      Recorded spins
-                    </div>
+                          return (
+                            <div
+                              className="probability-row"
+                              key={
+                                prize.id
+                              }
+                            >
+                              <div className="probability-main">
+                                <div
+                                  className={
+                                    prize.active
+                                      ? "prize-dot active"
+                                      : "prize-dot"
+                                  }
+                                />
+
+                                <div>
+                                  <div className="probability-name">
+                                    {
+                                      prize.name
+                                    }
+                                  </div>
+
+                                  <div className="probability-weight">
+                                    Weight:{" "}
+                                    {
+                                      prize.weight
+                                    }
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="probability-value">
+                                {prize.active
+                                  ? `${probability.toFixed(
+                                      2
+                                    )}%`
+                                  : "Inactive"}
+                              </div>
+                            </div>
+                          );
+                        }
+                      )
+                    )}
                   </div>
                 </div>
 
-                <div className="overview-card">
-                  <div className="overview-icon weight-icon">
-                    ∑
-                  </div>
+                <div className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <h3>
+                        Campaign Summary
+                      </h3>
 
-                  <div className="overview-content">
-                    <div className="overview-label">
-                      TOTAL WEIGHT
-                    </div>
-
-                    <div className="overview-value">
-                      {totalWinningWeight}
-                    </div>
-
-                    <div className="overview-description">
-                      All prize weights
+                      <p>
+                        Current system
+                        configuration.
+                      </p>
                     </div>
                   </div>
-                </div>
-              </div>
 
-              <div className="weight-info">
-                <div className="weight-info-icon">
-                  ℹ
-                </div>
+                  <div className="summary-list">
+                    <div className="summary-row">
+                      <span>
+                        Total prize
+                        weight
+                      </span>
 
-                <div>
-                  <strong>
-                    Winning probability
-                  </strong>
+                      <strong>
+                        {totalWinningWeight}
+                      </strong>
+                    </div>
 
-                  <p>
-                    Each active prize's
-                    probability is
-                    calculated from its
-                    weight relative to the
-                    total active weight.
-                  </p>
+                    <div className="summary-row">
+                      <span>
+                        Active prize
+                        weight
+                      </span>
+
+                      <strong>
+                        {
+                          activeWinningWeight
+                        }
+                      </strong>
+                    </div>
+
+                    <div className="summary-row">
+                      <span>
+                        Total spins
+                      </span>
+
+                      <strong>
+                        {
+                          statistics.totalSpins
+                        }
+                      </strong>
+                    </div>
+
+                    <div className="summary-row">
+                      <span>
+                        Total coupons
+                      </span>
+
+                      <strong>
+                        {
+                          statistics.totalCoupons
+                        }
+                      </strong>
+                    </div>
+
+                    <div className="summary-row">
+                      <span>
+                        Issued coupons
+                      </span>
+
+                      <strong>
+                        {
+                          statistics.issuedCoupons
+                        }
+                      </strong>
+                    </div>
+
+                    <div className="summary-row">
+                      <span>
+                        Redeemed coupons
+                      </span>
+
+                      <strong>
+                        {
+                          statistics.redeemedCoupons
+                        }
+                      </strong>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div className="quick-actions">
-                <div className="quick-actions-header">
-                  <div>
-                    <div className="eyebrow">
-                      QUICK ACTIONS
+                <div className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <h3>
+                        Quick Actions
+                      </h3>
+
+                      <p>
+                        Common campaign
+                        management
+                        actions.
+                      </p>
                     </div>
-
-                    <h2>
-                      Campaign Management
-                    </h2>
                   </div>
-                </div>
 
-                <div className="quick-actions-grid">
-                  <button
-                    className="quick-action-card"
-                    onClick={() =>
-                      selectTab("prizes")
-                    }
-                  >
-                    <span className="quick-action-icon">
-                      🎁
-                    </span>
+                  <div className="action-grid">
+                    <button
+                      className="action-card"
+                      onClick={() =>
+                        selectTab(
+                          "prizes"
+                        )
+                      }
+                    >
+                      <span>
+                        🎁
+                      </span>
 
-                    <span>
-                      <strong>
-                        Manage Prizes
-                      </strong>
+                      <div>
+                        <strong>
+                          Manage Prizes
+                        </strong>
 
-                      <small>
-                        Add, edit and control
-                        campaign prizes
-                      </small>
-                    </span>
+                        <small>
+                          Add, edit and
+                          control prize
+                          availability.
+                        </small>
+                      </div>
+                    </button>
 
-                    <span className="quick-arrow">
-                      →
-                    </span>
-                  </button>
+                    <button
+                      className="action-card"
+                      onClick={() =>
+                        selectTab(
+                          "history"
+                        )
+                      }
+                    >
+                      <span>
+                        🏆
+                      </span>
 
-                  <button
-                    className="quick-action-card"
-                    onClick={() =>
-                      selectTab("history")
-                    }
-                  >
-                    <span className="quick-action-icon">
-                      🏆
-                    </span>
+                      <div>
+                        <strong>
+                          Winner History
+                        </strong>
 
-                    <span>
-                      <strong>
-                        View Winners
-                      </strong>
+                        <small>
+                          View customer
+                          winners and
+                          coupons.
+                        </small>
+                      </div>
+                    </button>
 
-                      <small>
-                        Review recent spins
-                        and coupon codes
-                      </small>
-                    </span>
+                    <button
+                      className="action-card"
+                      onClick={() =>
+                        selectTab(
+                          "statistics"
+                        )
+                      }
+                    >
+                      <span>
+                        📊
+                      </span>
 
-                    <span className="quick-arrow">
-                      →
-                    </span>
-                  </button>
+                      <div>
+                        <strong>
+                          View Statistics
+                        </strong>
+
+                        <small>
+                          Monitor campaign
+                          performance.
+                        </small>
+                      </div>
+                    </button>
+                  </div>
                 </div>
               </div>
             </>
@@ -1110,71 +1559,36 @@ export default function AdminDashboard() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">
-                    CAMPAIGN MANAGEMENT
-                  </div>
-
-                  <h1>
+                  <h2>
                     Prize Management
-                  </h1>
+                  </h2>
 
                   <p>
-                    Control prizes, winning
+                    Configure prizes,
                     weights and coupon
-                    settings.
+                    prefixes.
                   </p>
                 </div>
 
                 <button
-                  className="add-button"
+                  className="primary-button"
                   onClick={openAddForm}
                 >
-                  + Add Prize
+                  <span>+</span>
+                  Add Prize
                 </button>
               </div>
 
-              {message && (
-                <div className="success-message">
-                  ✓ {message}
-                </div>
-              )}
-
-              {error && (
-                <div className="error-message">
-                  ! {error}
-                </div>
-              )}
-
-              <div className="section-header">
-                <div>
-                  <div className="eyebrow">
-                    PRIZE CONFIGURATION
-                  </div>
-
-                  <h2>
-                    Prize List
-                  </h2>
-
+              {loadingPrizes ? (
+                <div className="panel loading-panel">
+                  <div className="spinner" />
                   <p>
-                    Manage all available
-                    Spin & Win prizes.
+                    Loading prizes...
                   </p>
                 </div>
-
-                <div className="prize-count">
-                  {prizes.length} prize
-                  {prizes.length !== 1
-                    ? "s"
-                    : ""}
-                </div>
-              </div>
-
-              {loadingPrizes ? (
-                <div className="loading-box">
-                  Loading prizes...
-                </div>
-              ) : prizes.length === 0 ? (
-                <div className="empty-box">
+              ) : prizes.length ===
+                0 ? (
+                <div className="panel empty-panel">
                   <div className="empty-icon">
                     🎁
                   </div>
@@ -1184,179 +1598,192 @@ export default function AdminDashboard() {
                   </h3>
 
                   <p>
-                    Add your first Spin &
-                    Win prize to get
-                    started.
+                    Add your first prize
+                    to start configuring
+                    the wheel.
                   </p>
 
                   <button
-                    className="add-button"
+                    className="primary-button"
                     onClick={
                       openAddForm
                     }
                   >
-                    + Add Prize
+                    Add First Prize
                   </button>
                 </div>
               ) : (
-                <div className="table-card">
+                <div className="panel">
                   <div className="table-wrapper">
-                    <table>
+                    <table className="data-table">
                       <thead>
                         <tr>
                           <th>
-                            ORDER
+                            Order
                           </th>
-
                           <th>
-                            PRIZE
+                            Prize
                           </th>
-
                           <th>
-                            WEIGHT
+                            Weight
                           </th>
-
                           <th>
-                            COUPON
+                            Probability
                           </th>
-
                           <th>
-                            STATUS
+                            Coupon Prefix
                           </th>
-
                           <th>
-                            ACTIONS
+                            Status
+                          </th>
+                          <th>
+                            Actions
                           </th>
                         </tr>
                       </thead>
 
                       <tbody>
                         {prizes.map(
-                          (prize) => (
-                            <tr
-                              key={
-                                prize.id
-                              }
-                            >
-                              <td>
-                                <span className="order-number">
-                                  {
-                                    prize.sort_order
-                                  }
-                                </span>
-                              </td>
-
-                              <td>
-                                <div className="prize-name">
-                                  {
-                                    prize.name
-                                  }
-                                </div>
-
-                                {prize.description && (
-                                  <div className="prize-description">
-                                    {
-                                      prize.description
-                                    }
-                                  </div>
-                                )}
-                              </td>
-
-                              <td>
-                                <span className="weight">
-                                  {
+                          (prize) => {
+                            const probability =
+                              prize.active &&
+                              activeWinningWeight >
+                                0
+                                ? (Number(
                                     prize.weight
-                                  }
-                                </span>
-                              </td>
+                                  ) /
+                                    activeWinningWeight) *
+                                  100
+                                : 0;
 
-                              <td>
-                                <span className="coupon-prefix">
-                                  {prize.coupon_prefix ||
-                                    "-"}
-                                </span>
-                              </td>
+                            return (
+                              <tr
+                                key={
+                                  prize.id
+                                }
+                              >
+                                <td>
+                                  <span className="order-badge">
+                                    {
+                                      prize.sort_order
+                                    }
+                                  </span>
+                                </td>
 
-                              <td>
-                                <button
-                                  className={
-                                    prize.active
-                                      ? "status active"
-                                      : "status inactive"
-                                  }
-                                  onClick={() =>
-                                    togglePrize(
-                                      prize
-                                    )
-                                  }
-                                >
+                                <td>
+                                  <div className="table-prize">
+                                    <strong>
+                                      {
+                                        prize.name
+                                      }
+                                    </strong>
+
+                                    {prize.description && (
+                                      <small>
+                                        {
+                                          prize.description
+                                        }
+                                      </small>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <strong>
+                                    {
+                                      prize.weight
+                                    }
+                                  </strong>
+                                </td>
+
+                                <td>
                                   {prize.active
-                                    ? "ACTIVE"
-                                    : "INACTIVE"}
-                                </button>
-                              </td>
+                                    ? `${probability.toFixed(
+                                        2
+                                      )}%`
+                                    : "-"}
+                                </td>
 
-                              <td>
-                                <div className="actions">
-                                  <button
-                                    className="edit-button"
-                                    onClick={() =>
-                                      openEditForm(
-                                        prize
-                                      )
+                                <td>
+                                  <span className="coupon-prefix">
+                                    {prize.coupon_prefix ||
+                                      "-"}
+                                  </span>
+                                </td>
+
+                                <td>
+                                  <span
+                                    className={
+                                      prize.active
+                                        ? "status-badge active"
+                                        : "status-badge inactive"
                                     }
                                   >
-                                    Edit
-                                  </button>
+                                    <span />
+                                    {prize.active
+                                      ? "Active"
+                                      : "Inactive"}
+                                  </span>
+                                </td>
 
-                                  <button
-                                    className="delete-button"
-                                    disabled={
-                                      deleting ===
+                                <td>
+                                  <div className="table-actions">
+                                    <button
+                                      className="small-button edit"
+                                      onClick={() =>
+                                        openEditForm(
+                                          prize
+                                        )
+                                      }
+                                    >
+                                      Edit
+                                    </button>
+
+                                    <button
+                                      className={
+                                        prize.active
+                                          ? "small-button warning"
+                                          : "small-button success"
+                                      }
+                                      onClick={() =>
+                                        togglePrize(
+                                          prize
+                                        )
+                                      }
+                                    >
+                                      {prize.active
+                                        ? "Deactivate"
+                                        : "Activate"}
+                                    </button>
+
+                                    <button
+                                      className="small-button danger"
+                                      onClick={() =>
+                                        deletePrize(
+                                          prize
+                                        )
+                                      }
+                                      disabled={
+                                        deleting ===
+                                        prize.id
+                                      }
+                                    >
+                                      {deleting ===
                                       prize.id
-                                    }
-                                    onClick={() =>
-                                      deletePrize(
-                                        prize
-                                      )
-                                    }
-                                  >
-                                    {deleting ===
-                                    prize.id
-                                      ? "..."
-                                      : "Delete"}
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          )
+                                        ? "..."
+                                        : "Delete"}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          }
                         )}
                       </tbody>
                     </table>
                   </div>
                 </div>
               )}
-
-              <div className="weight-info">
-                <div className="weight-info-icon">
-                  ℹ
-                </div>
-
-                <div>
-                  <strong>
-                    Winning probability
-                  </strong>
-
-                  <p>
-                    Higher weight means a
-                    higher chance of the
-                    prize being selected.
-                    Only active prizes
-                    participate in the
-                    winning calculation.
-                  </p>
-                </div>
-              </div>
             </>
           )}
 
@@ -1364,41 +1791,208 @@ export default function AdminDashboard() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">
-                    WINNER ACTIVITY
-                  </div>
-
-                  <h1>
-                    Spin & Winner History
-                  </h1>
+                  <h2>
+                    Winner History
+                  </h2>
 
                   <p>
-                    View recent spins,
+                    View spin activity,
                     winners and issued
-                    coupon codes.
+                    coupons.
                   </p>
                 </div>
 
                 <button
-                  className="refresh-button"
+                  className="secondary-button"
                   onClick={loadHistory}
                   disabled={
                     loadingHistory
                   }
                 >
-                  {loadingHistory
-                    ? "Refreshing..."
-                    : "↻ Refresh"}
+                  ↻ Refresh
                 </button>
               </div>
 
-              {historyError && (
-                <div className="history-error">
+              <div className="panel filter-panel">
+                <div className="filter-header">
                   <div>
-                    <strong>
+                    <h3>
+                      Search & Filters
+                    </h3>
+
+                    <p>
+                      Find winners by
+                      mobile number,
+                      coupon code or
+                      prize.
+                    </p>
+                  </div>
+
+                  <button
+                    className="clear-button"
+                    onClick={
+                      clearHistoryFilters
+                    }
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+
+                <div className="filters-grid">
+                  <div className="filter-field search-field">
+                    <label>
+                      Search
+                    </label>
+
+                    <div className="input-with-icon">
+                      <span>
+                        🔎
+                      </span>
+
+                      <input
+                        type="text"
+                        value={
+                          historySearch
+                        }
+                        onChange={(event) =>
+                          setHistorySearch(
+                            event.target
+                              .value
+                          )
+                        }
+                        placeholder="Mobile number, coupon code or prize..."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="filter-field">
+                    <label>
+                      Prize
+                    </label>
+
+                    <select
+                      value={
+                        historyPrizeFilter
+                      }
+                      onChange={(event) =>
+                        setHistoryPrizeFilter(
+                          event.target
+                            .value
+                        )
+                      }
+                    >
+                      <option value="all">
+                        All Prizes
+                      </option>
+
+                      {prizes.map(
+                        (prize) => (
+                          <option
+                            key={
+                              prize.id
+                            }
+                            value={
+                              prize.id
+                            }
+                          >
+                            {prize.name}
+                          </option>
+                        )
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="filter-field">
+                    <label>
+                      Coupon Status
+                    </label>
+
+                    <select
+                      value={
+                        historyStatusFilter
+                      }
+                      onChange={(event) =>
+                        setHistoryStatusFilter(
+                          event.target
+                            .value
+                        )
+                      }
+                    >
+                      <option value="all">
+                        All Statuses
+                      </option>
+
+                      <option value="issued">
+                        Issued
+                      </option>
+
+                      <option value="redeemed">
+                        Redeemed
+                      </option>
+                    </select>
+                  </div>
+
+                  <div className="filter-field">
+                    <label>
+                      Date
+                    </label>
+
+                    <select
+                      value={
+                        historyDateFilter
+                      }
+                      onChange={(event) =>
+                        setHistoryDateFilter(
+                          event.target
+                            .value
+                        )
+                      }
+                    >
+                      <option value="all">
+                        All Time
+                      </option>
+
+                      <option value="today">
+                        Today
+                      </option>
+
+                      <option value="7days">
+                        Last 7 Days
+                      </option>
+
+                      <option value="30days">
+                        Last 30 Days
+                      </option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="filter-result">
+                  Showing{" "}
+                  <strong>
+                    {
+                      filteredHistory.length
+                    }
+                  </strong>{" "}
+                  of{" "}
+                  <strong>
+                    {history.length}
+                  </strong>{" "}
+                  loaded records
+                </div>
+              </div>
+
+              {historyError && (
+                <div className="panel error-panel">
+                  <div className="error-icon">
+                    !
+                  </div>
+
+                  <div>
+                    <h3>
                       Unable to load
-                      history
-                    </strong>
+                      winner history
+                    </h3>
 
                     <p>
                       {historyError}
@@ -1406,6 +2000,7 @@ export default function AdminDashboard() {
                   </div>
 
                   <button
+                    className="secondary-button"
                     onClick={
                       loadHistory
                     }
@@ -1415,192 +2010,629 @@ export default function AdminDashboard() {
                 </div>
               )}
 
-              <div className="history-summary">
-                <div className="history-summary-card">
-                  <div className="history-summary-icon">
-                    ↻
+              {!historyError &&
+                loadingHistory && (
+                  <div className="panel loading-panel">
+                    <div className="spinner" />
+
+                    <p>
+                      Loading winner
+                      history...
+                    </p>
                   </div>
+                )}
 
-                  <div>
-                    <div className="overview-label">
-                      RECENT SPINS
+              {!historyError &&
+                !loadingHistory &&
+                filteredHistory.length ===
+                  0 && (
+                  <div className="panel empty-panel">
+                    <div className="empty-icon">
+                      🏆
                     </div>
 
-                    <div className="history-summary-value">
-                      {history.length}
+                    <h3>
+                      {history.length ===
+                      0
+                        ? "No spins yet"
+                        : "No matching records"}
+                    </h3>
+
+                    <p>
+                      {history.length ===
+                      0
+                        ? "Winner activity will appear here after customers use the wheel."
+                        : "Try changing your search or filters."}
+                    </p>
+
+                    {history.length >
+                      0 && (
+                      <button
+                        className="secondary-button"
+                        onClick={
+                          clearHistoryFilters
+                        }
+                      >
+                        Clear Filters
+                      </button>
+                    )}
+                  </div>
+                )}
+
+              {!historyError &&
+                !loadingHistory &&
+                filteredHistory.length >
+                  0 && (
+                  <div className="panel">
+                    <div className="history-table-wrapper">
+                      <table className="data-table history-table">
+                        <thead>
+                          <tr>
+                            <th>
+                              Date & Time
+                            </th>
+
+                            <th>
+                              Mobile Number
+                            </th>
+
+                            <th>
+                              Prize
+                            </th>
+
+                            <th>
+                              Coupon Code
+                            </th>
+
+                            <th>
+                              Status
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {filteredHistory.map(
+                            (record) => (
+                              <tr
+                                key={
+                                  record.id
+                                }
+                              >
+                                <td>
+                                  <div className="date-cell">
+                                    {formatDateTime(
+                                      record.created_at
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <span className="mobile-number">
+                                    {
+                                      record.mobile
+                                    }
+                                  </span>
+                                </td>
+
+                                <td>
+                                  <div className="history-prize">
+                                    <span className="history-prize-icon">
+                                      🎁
+                                    </span>
+
+                                    <strong>
+                                      {
+                                        record.prize_name
+                                      }
+                                    </strong>
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <span className="coupon-code">
+                                    {
+                                      record.coupon_code
+                                    }
+                                  </span>
+                                </td>
+
+                                <td>
+                                  <span
+                                    className={getStatusClass(
+                                      record.coupon_status
+                                    )}
+                                  >
+                                    {
+                                      record.coupon_status
+                                    }
+                                  </span>
+                                </td>
+                              </tr>
+                            )
+                          )}
+                        </tbody>
+                      </table>
                     </div>
 
-                    <div className="overview-description">
-                      Latest 100 records
+                    <div className="history-footer">
+                      <span>
+                        Latest 100 spin
+                        records are
+                        loaded for
+                        Winner History.
+                      </span>
+
+                      <button
+                        className="secondary-button"
+                        onClick={
+                          loadHistory
+                        }
+                      >
+                        ↻ Refresh
+                      </button>
                     </div>
                   </div>
+                )}
+            </>
+          )}
+
+          {activeTab ===
+            "statistics" && (
+            <>
+              <div className="page-heading">
+                <div>
+                  <h2>
+                    Campaign Statistics
+                  </h2>
+
+                  <p>
+                    Monitor spins,
+                    coupons and prize
+                    distribution.
+                  </p>
                 </div>
+
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    loadStatistics();
+                    loadHistory();
+                  }}
+                  disabled={
+                    loadingStatistics
+                  }
+                >
+                  ↻ Refresh
+                </button>
               </div>
 
-              {loadingHistory ? (
-                <div className="history-loading">
-                  <div className="history-loader">
-                    ↻
-                  </div>
+              {statisticsError && (
+                <div className="alert error">
+                  <span>!</span>
 
-                  <h3>
-                    Loading winner
-                    history...
-                  </h3>
-
-                  <p>
-                    Please wait while the
-                    latest spin records are
-                    loaded.
-                  </p>
-                </div>
-              ) : history.length === 0 ? (
-                <div className="history-empty">
-                  <div className="history-empty-icon">
-                    🏆
-                  </div>
-
-                  <h3>
-                    No spin history
-                  </h3>
-
-                  <p>
-                    Spin records will appear
-                    here when customers
-                    participate in the
-                    campaign.
-                  </p>
-                </div>
-              ) : (
-                <div className="history-table-card">
-                  <div className="history-table-wrapper">
-                    <table className="history-table">
-                      <thead>
-                        <tr>
-                          <th>
-                            DATE & TIME
-                          </th>
-
-                          <th>
-                            MOBILE
-                          </th>
-
-                          <th>
-                            PRIZE
-                          </th>
-
-                          <th>
-                            COUPON
-                          </th>
-
-                          <th>
-                            STATUS
-                          </th>
-                        </tr>
-                      </thead>
-
-                      <tbody>
-                        {history.map(
-                          (record) => (
-                            <tr
-                              key={
-                                record.id
-                              }
-                            >
-                              <td>
-                                <div className="history-date">
-                                  {formatDateTime(
-                                    record.created_at
-                                  )}
-                                </div>
-                              </td>
-
-                              <td>
-                                <span className="history-mobile">
-                                  {maskMobile(
-                                    record.mobile
-                                  )}
-                                </span>
-                              </td>
-
-                              <td>
-                                <div className="history-prize">
-                                  {
-                                    record.prize_name
-                                  }
-                                </div>
-                              </td>
-
-                              <td>
-                                <span className="history-coupon">
-                                  {
-                                    record.coupon_code
-                                  }
-                                </span>
-                              </td>
-
-                              <td>
-                                <span
-                                  className={getStatusClass(
-                                    record.coupon_status
-                                  )}
-                                >
-                                  {record.coupon_status.toUpperCase()}
-                                </span>
-                              </td>
-                            </tr>
-                          )
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                  <span>
+                    {statisticsError}
+                  </span>
                 </div>
               )}
 
-              <div className="history-note">
-                <div className="weight-info-icon">
-                  ℹ
+              <div className="stats-grid">
+                <div className="stat-card large-stat">
+                  <div className="stat-icon red">
+                    🎯
+                  </div>
+
+                  <div>
+                    <div className="stat-label">
+                      TOTAL SPINS
+                    </div>
+
+                    <div className="stat-value">
+                      {loadingStatistics
+                        ? "..."
+                        : statistics.totalSpins}
+                    </div>
+
+                    <div className="stat-note">
+                      Customers who
+                      completed a spin
+                    </div>
+                  </div>
                 </div>
 
-                <div>
-                  <strong>
-                    Winner history
-                  </strong>
+                <div className="stat-card large-stat">
+                  <div className="stat-icon">
+                    🎟️
+                  </div>
 
-                  <p>
-                    This page displays the
-                    latest 100 recorded
-                    spins. Customer mobile
-                    numbers are partially
-                    masked for privacy.
-                  </p>
+                  <div>
+                    <div className="stat-label">
+                      TOTAL COUPONS
+                    </div>
+
+                    <div className="stat-value">
+                      {loadingStatistics
+                        ? "..."
+                        : statistics.totalCoupons}
+                    </div>
+
+                    <div className="stat-note">
+                      Coupons generated
+                    </div>
+                  </div>
                 </div>
+
+                <div className="stat-card large-stat">
+                  <div className="stat-icon green">
+                    ✓
+                  </div>
+
+                  <div>
+                    <div className="stat-label">
+                      ISSUED
+                    </div>
+
+                    <div className="stat-value">
+                      {loadingStatistics
+                        ? "..."
+                        : statistics.issuedCoupons}
+                    </div>
+
+                    <div className="stat-note">
+                      {issuedPercentage}% of
+                      total coupons
+                    </div>
+                  </div>
+                </div>
+
+                <div className="stat-card large-stat">
+                  <div className="stat-icon purple">
+                    ✓
+                  </div>
+
+                  <div>
+                    <div className="stat-label">
+                      REDEEMED
+                    </div>
+
+                    <div className="stat-value">
+                      {loadingStatistics
+                        ? "..."
+                        : statistics.redeemedCoupons}
+                    </div>
+
+                    <div className="stat-note">
+                      {redeemedPercentage}%
+                      of total
+                      coupons
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="statistics-grid">
+                <div className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <h3>
+                        Prize-wise Winner
+                        Distribution
+                      </h3>
+
+                      <p>
+                        Distribution based
+                        on the loaded Winner
+                        History records.
+                      </p>
+                    </div>
+                  </div>
+
+                  {prizeDistribution.length ===
+                  0 ? (
+                    <div className="empty-state">
+                      <div className="empty-icon">
+                        📊
+                      </div>
+
+                      <p>
+                        No winner data
+                        available yet.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="distribution-list">
+                      {prizeDistribution.map(
+                        (item) => {
+                          const percentage =
+                            totalDistributionSpins >
+                            0
+                              ? (item.count /
+                                  totalDistributionSpins) *
+                                100
+                              : 0;
+
+                          return (
+                            <div
+                              className="distribution-item"
+                              key={
+                                item.id
+                              }
+                            >
+                              <div className="distribution-top">
+                                <div>
+                                  <strong>
+                                    {
+                                      item.name
+                                    }
+                                  </strong>
+
+                                  <span>
+                                    {
+                                      item.count
+                                    }{" "}
+                                    winner
+                                    {item.count !==
+                                    1
+                                      ? "s"
+                                      : ""}
+                                  </span>
+                                </div>
+
+                                <strong>
+                                  {percentage.toFixed(
+                                    1
+                                  )}
+                                  %
+                                </strong>
+                              </div>
+
+                              <div className="progress-track">
+                                <div
+                                  className="progress-bar"
+                                  style={{
+                                    width: `${Math.min(
+                                      percentage,
+                                      100
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="panel">
+                  <div className="panel-header">
+                    <div>
+                      <h3>
+                        Coupon Status
+                      </h3>
+
+                      <p>
+                        Current coupon
+                        redemption
+                        breakdown.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="coupon-stat-card">
+                    <div className="coupon-stat-top">
+                      <div className="coupon-stat-icon issued">
+                        🎟️
+                      </div>
+
+                      <div>
+                        <span>
+                          Issued
+                        </span>
+
+                        <strong>
+                          {
+                            statistics.issuedCoupons
+                          }
+                        </strong>
+                      </div>
+
+                      <b>
+                        {issuedPercentage}%
+                      </b>
+                    </div>
+
+                    <div className="progress-track">
+                      <div
+                        className="progress-bar"
+                        style={{
+                          width: `${issuedPercentage}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="coupon-stat-card">
+                    <div className="coupon-stat-top">
+                      <div className="coupon-stat-icon redeemed">
+                        ✓
+                      </div>
+
+                      <div>
+                        <span>
+                          Redeemed
+                        </span>
+
+                        <strong>
+                          {
+                            statistics.redeemedCoupons
+                          }
+                        </strong>
+                      </div>
+
+                      <b>
+                        {
+                          redeemedPercentage
+                        }
+                        %
+                      </b>
+                    </div>
+
+                    <div className="progress-track">
+                      <div
+                        className="progress-bar"
+                        style={{
+                          width: `${redeemedPercentage}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="statistics-summary">
+                    <div>
+                      <span>
+                        Total coupons
+                      </span>
+
+                      <strong>
+                        {
+                          statistics.totalCoupons
+                        }
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Active prizes
+                      </span>
+
+                      <strong>
+                        {activePrizes}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Active weight
+                      </span>
+
+                      <strong>
+                        {
+                          activeWinningWeight
+                        }
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-header">
+                  <div>
+                    <h3>
+                      Recent Activity
+                    </h3>
+
+                    <p>
+                      Most recent winner
+                      activity.
+                    </p>
+                  </div>
+
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      selectTab(
+                        "history"
+                      )
+                    }
+                  >
+                    View Full History
+                  </button>
+                </div>
+
+                {history.length ===
+                0 ? (
+                  <div className="empty-state">
+                    <p>
+                      No recent activity.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="recent-list">
+                    {history
+                      .slice(0, 5)
+                      .map(
+                        (record) => (
+                          <div
+                            className="recent-item"
+                            key={
+                              record.id
+                            }
+                          >
+                            <div className="recent-icon">
+                              🏆
+                            </div>
+
+                            <div className="recent-content">
+                              <strong>
+                                {
+                                  record.prize_name
+                                }
+                              </strong>
+
+                              <span>
+                                {
+                                  record.mobile
+                                }
+                              </span>
+                            </div>
+
+                            <div className="recent-right">
+                              <span className="coupon-code">
+                                {
+                                  record.coupon_code
+                                }
+                              </span>
+
+                              <small>
+                                {formatDateTime(
+                                  record.created_at
+                                )}
+                              </small>
+                            </div>
+                          </div>
+                        )
+                      )}
+                  </div>
+                )}
               </div>
             </>
           )}
-        </section>
-      </div>
+        </div>
+      </section>
 
       {showForm && (
-        <div className="modal-overlay">
+        <div className="modal-backdrop">
           <div className="modal">
             <div className="modal-header">
               <div>
-                <div className="modal-eyebrow">
-                  {editingPrize
-                    ? "EDIT PRIZE"
-                    : "NEW PRIZE"}
-                </div>
-
                 <h2>
                   {editingPrize
                     ? "Edit Prize"
                     : "Add Prize"}
                 </h2>
+
+                <p>
+                  Configure the prize
+                  and its winning
+                  probability.
+                </p>
               </div>
 
               <button
-                className="close-button"
+                className="modal-close"
                 onClick={closeForm}
                 disabled={saving}
               >
@@ -1611,77 +2643,80 @@ export default function AdminDashboard() {
             <form
               onSubmit={savePrize}
             >
-              <div className="form-field">
-                <label>
-                  PRIZE NAME
-                </label>
-
-                <input
-                  type="text"
-                  value={form.name}
-                  placeholder="e.g. 10% OFF"
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      name: e.target.value,
-                    })
-                  }
-                  disabled={saving}
-                />
-              </div>
-
-              <div className="form-field">
-                <label>
-                  DESCRIPTION
-                </label>
-
-                <textarea
-                  value={
-                    form.description
-                  }
-                  placeholder="Optional prize description"
-                  rows={3}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      description:
-                        e.target.value,
-                    })
-                  }
-                  disabled={saving}
-                />
-              </div>
-
               <div className="form-grid">
-                <div className="form-field">
+                <div className="form-group full">
                   <label>
-                    WINNING WEIGHT
+                    Prize Name
+                  </label>
+
+                  <input
+                    type="text"
+                    value={form.name}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        name:
+                          event.target
+                            .value,
+                      })
+                    }
+                    placeholder="e.g. 10% OFF"
+                    required
+                  />
+                </div>
+
+                <div className="form-group full">
+                  <label>
+                    Description
+                  </label>
+
+                  <textarea
+                    value={
+                      form.description
+                    }
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        description:
+                          event.target
+                            .value,
+                      })
+                    }
+                    placeholder="Short description of the prize"
+                    rows={3}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>
+                    Weight
                   </label>
 
                   <input
                     type="number"
                     min="0"
-                    step="1"
+                    step="0.01"
                     value={form.weight}
-                    onChange={(e) =>
+                    onChange={(event) =>
                       setForm({
                         ...form,
                         weight:
-                          e.target.value,
+                          event.target
+                            .value,
                       })
                     }
-                    disabled={saving}
+                    required
                   />
 
                   <small>
-                    Higher weight = higher
-                    chance.
+                    Higher weight =
+                    higher probability.
                   </small>
                 </div>
 
-                <div className="form-field">
+                <div className="form-group">
                   <label>
-                    DISPLAY ORDER
+                    Display Order
                   </label>
 
                   <input
@@ -1691,94 +2726,87 @@ export default function AdminDashboard() {
                     value={
                       form.sort_order
                     }
-                    onChange={(e) =>
+                    onChange={(event) =>
                       setForm({
                         ...form,
                         sort_order:
-                          e.target.value,
+                          event.target
+                            .value,
                       })
                     }
-                    disabled={saving}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>
+                    Coupon Prefix
+                  </label>
+
+                  <input
+                    type="text"
+                    value={
+                      form.coupon_prefix
+                    }
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        coupon_prefix:
+                          event.target
+                            .value
+                            .toUpperCase(),
+                      })
+                    }
+                    placeholder="e.g. SG10"
+                    maxLength={10}
+                    required
                   />
 
                   <small>
-                    Controls wheel order.
+                    Used when generating
+                    coupon codes.
                   </small>
                 </div>
-              </div>
 
-              <div className="form-field">
-                <label>
-                  COUPON PREFIX
-                </label>
+                <div className="form-group">
+                  <label>
+                    Status
+                  </label>
 
-                <input
-                  type="text"
-                  maxLength={10}
-                  value={
-                    form.coupon_prefix
-                  }
-                  placeholder="e.g. SG10"
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      coupon_prefix:
-                        e.target.value.toUpperCase(),
-                    })
-                  }
-                  disabled={saving}
-                />
+                  <label className="switch-row">
+                    <input
+                      type="checkbox"
+                      checked={
+                        form.active
+                      }
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          active:
+                            event.target
+                              .checked,
+                        })
+                      }
+                    />
 
-                <small>
-                  Example:
-                  SG10-XXXXXXXX
-                </small>
-              </div>
+                    <span className="switch" />
 
-              <div className="active-toggle">
-                <div>
-                  <strong>
-                    Prize Status
-                  </strong>
-
-                  <p>
-                    {form.active
-                      ? "This prize can be won."
-                      : "This prize is hidden from the wheel."}
-                  </p>
+                    <span>
+                      {form.active
+                        ? "Active"
+                        : "Inactive"}
+                    </span>
+                  </label>
                 </div>
+              </div>
 
+              <div className="modal-footer">
                 <button
                   type="button"
-                  className={
-                    form.active
-                      ? "toggle on"
-                      : "toggle"
+                  className="secondary-button"
+                  onClick={
+                    closeForm
                   }
-                  onClick={() =>
-                    setForm({
-                      ...form,
-                      active:
-                        !form.active,
-                    })
-                  }
-                  disabled={saving}
-                >
-                  <span />
-                </button>
-              </div>
-
-              {error && (
-                <div className="form-error">
-                  {error}
-                </div>
-              )}
-
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="cancel-button"
-                  onClick={closeForm}
                   disabled={saving}
                 >
                   Cancel
@@ -1786,14 +2814,14 @@ export default function AdminDashboard() {
 
                 <button
                   type="submit"
-                  className="save-button"
+                  className="primary-button"
                   disabled={saving}
                 >
                   {saving
-                    ? "SAVING..."
+                    ? "Saving..."
                     : editingPrize
-                    ? "SAVE CHANGES"
-                    : "ADD PRIZE"}
+                    ? "Update Prize"
+                    : "Add Prize"}
                 </button>
               </div>
             </form>
@@ -1802,146 +2830,89 @@ export default function AdminDashboard() {
       )}
 
       <style jsx>{`
+        * {
+          box-sizing: border-box;
+        }
+
         .admin-page {
           min-height: 100vh;
-          background: #f5f5f5;
-        }
-
-        .admin-header {
-          min-height: 70px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 12px 28px;
-          box-sizing: border-box;
-          background: white;
-          border-bottom: 1px solid #e7e7e7;
-          position: relative;
-          z-index: 50;
-        }
-
-        .header-brand {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .header-mark {
-          width: 40px;
-          height: 40px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 9px;
-          background: #e31b23;
-          color: white;
-          font-size: 23px;
-          font-weight: 900;
-        }
-
-        .header-name {
-          font-size: 18px;
-          font-weight: 950;
-          letter-spacing: 1px;
-        }
-
-        .header-subtitle {
-          margin-top: 1px;
-          color: #e31b23;
-          font-size: 8px;
-          font-weight: 900;
-          letter-spacing: 2px;
-        }
-
-        .header-right {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-        }
-
-        .admin-email {
-          color: #777;
-          font-size: 12px;
-        }
-
-        .header-right button {
-          padding: 9px 15px;
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          background: white;
-          color: #333;
-          font-size: 12px;
-          font-weight: 800;
-          cursor: pointer;
-        }
-
-        .admin-layout {
-          display: flex;
-          min-height: calc(100vh - 70px);
+          background: #f5f6f8;
+          color: #171717;
+          font-family:
+            Arial,
+            Helvetica,
+            sans-serif;
         }
 
         .sidebar {
-          width: 245px;
-          flex-shrink: 0;
+          position: fixed;
+          top: 0;
+          left: 0;
+          bottom: 0;
+          width: 255px;
+          background: #111315;
+          color: #fff;
           display: flex;
           flex-direction: column;
-          box-sizing: border-box;
-          padding: 25px 15px;
-          background: #181818;
-          color: white;
-          position: sticky;
-          top: 0;
-          height: calc(100vh - 70px);
-          overflow-y: auto;
-          z-index: 40;
+          z-index: 100;
         }
 
-        .sidebar-brand {
+        .sidebar-top {
+          padding: 25px 22px;
           display: flex;
           align-items: center;
-          gap: 11px;
-          padding: 4px 9px 18px;
+          justify-content: space-between;
+          border-bottom: 1px solid
+            rgba(255, 255, 255, 0.07);
         }
 
-        .sidebar-mark {
-          width: 38px;
-          height: 38px;
+        .sidebar-logo {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .logo-mark {
+          width: 43px;
+          height: 43px;
+          border-radius: 10px;
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 9px;
           background: #e31b23;
-          color: white;
-          font-size: 22px;
-          font-weight: 950;
+          color: #fff;
+          font-size: 25px;
+          font-weight: 900;
         }
 
-        .sidebar-name {
-          color: white;
-          font-size: 15px;
-          font-weight: 950;
+        .brand-name {
+          font-size: 16px;
+          font-weight: 900;
           letter-spacing: 1px;
         }
 
-        .sidebar-subtitle {
+        .brand-subtitle {
           margin-top: 2px;
-          color: #e31b23;
-          font-size: 8px;
-          font-weight: 900;
-          letter-spacing: 1.8px;
+          color: #a5a5a5;
+          font-size: 9px;
+          font-weight: 700;
+          letter-spacing: 2px;
         }
 
-        .sidebar-divider {
-          height: 1px;
-          margin: 0 5px 22px;
-          background: rgba(255, 255, 255, 0.09);
+        .mobile-close {
+          display: none;
+          border: 0;
+          background: transparent;
+          color: #fff;
+          font-size: 28px;
+          cursor: pointer;
         }
 
         .sidebar-label {
-          padding: 0 12px 9px;
+          padding: 28px 22px 10px;
           color: #777;
-          font-size: 8px;
-          font-weight: 900;
+          font-size: 10px;
+          font-weight: 800;
           letter-spacing: 1.5px;
         }
 
@@ -1949,95 +2920,187 @@ export default function AdminDashboard() {
           display: flex;
           flex-direction: column;
           gap: 5px;
+          padding: 0 12px;
         }
 
         .nav-item {
+          border: 0;
+          background: transparent;
+          color: #aaa;
           width: 100%;
           display: flex;
           align-items: center;
-          gap: 12px;
-          padding: 12px 12px;
-          box-sizing: border-box;
-          border: 1px solid transparent;
-          border-radius: 9px;
-          background: transparent;
-          color: #aaa;
-          font-family: inherit;
-          font-size: 12px;
-          font-weight: 800;
-          text-align: left;
+          gap: 13px;
+          padding: 13px 12px;
+          border-radius: 8px;
           cursor: pointer;
-          transition: 0.2s;
+          font-size: 13px;
+          font-weight: 700;
+          text-align: left;
+          transition:
+            background 0.2s,
+            color 0.2s;
         }
 
         .nav-item:hover {
-          background: rgba(255, 255, 255, 0.05);
-          color: white;
+          background: #1b1d20;
+          color: #fff;
         }
 
         .nav-item.active {
-          background: rgba(227, 27, 35, 0.13);
-          border-color: rgba(227, 27, 35, 0.2);
-          color: white;
+          background: #e31b23;
+          color: #fff;
         }
 
         .nav-icon {
-          width: 25px;
-          height: 25px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-          border-radius: 7px;
-          background: rgba(255, 255, 255, 0.05);
-          font-size: 12px;
-        }
-
-        .nav-item.active .nav-icon {
-          background: #e31b23;
-          color: white;
+          width: 23px;
+          text-align: center;
+          font-size: 16px;
         }
 
         .sidebar-bottom {
           margin-top: auto;
+          padding: 18px;
+          border-top: 1px solid
+            rgba(255, 255, 255, 0.07);
         }
 
-        .sidebar-bottom .sidebar-divider {
-          margin-top: 25px;
-        }
-
-        .sidebar-action {
-          width: 100%;
+        .admin-user {
           display: flex;
           align-items: center;
-          gap: 12px;
-          padding: 11px 12px;
-          border: none;
-          border-radius: 9px;
+          gap: 10px;
+          margin-bottom: 15px;
+        }
+
+        .user-avatar {
+          width: 36px;
+          height: 36px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          background: #292c30;
+          color: #fff;
+          font-size: 14px;
+          font-weight: 800;
+        }
+
+        .user-details {
+          min-width: 0;
+        }
+
+        .user-label {
+          color: #777;
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 1px;
+        }
+
+        .user-email {
+          margin-top: 3px;
+          color: #ddd;
+          font-size: 11px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 160px;
+        }
+
+        .logout-button {
+          width: 100%;
+          border: 1px solid #292c30;
+          border-radius: 7px;
           background: transparent;
-          color: #999;
-          font-family: inherit;
+          color: #aaa;
+          padding: 10px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 700;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .logout-button:hover {
+          background: #1b1d20;
+          color: #fff;
+        }
+
+        .main-area {
+          min-height: 100vh;
+          margin-left: 255px;
+        }
+
+        .admin-header {
+          min-height: 78px;
+          background: #fff;
+          border-bottom: 1px solid #e8e8e8;
+          padding: 15px 30px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+        }
+
+        .header-left {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+        }
+
+        .header-left h1 {
+          margin: 0;
+          font-size: 21px;
+          font-weight: 800;
+        }
+
+        .header-left p {
+          margin: 4px 0 0;
+          color: #888;
+          font-size: 12px;
+        }
+
+        .header-right {
+          display: flex;
+          align-items: center;
+          gap: 18px;
+        }
+
+        .header-email {
+          color: #666;
+          font-size: 11px;
+        }
+
+        .header-status {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          color: #555;
           font-size: 11px;
           font-weight: 700;
-          text-align: left;
+        }
+
+        .status-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #21a366;
+        }
+
+        .mobile-menu {
+          display: none;
+          border: 0;
+          background: transparent;
+          font-size: 24px;
           cursor: pointer;
         }
 
-        .sidebar-action:hover {
-          background: rgba(255, 255, 255, 0.05);
-          color: white;
-        }
-
-        .logout-action:hover {
-          color: #ff6b70;
-        }
-
-        .admin-content {
-          width: 100%;
-          max-width: 1250px;
+        .content {
+          padding: 30px;
+          max-width: 1500px;
           margin: 0 auto;
-          padding: 42px 35px 70px;
-          box-sizing: border-box;
         }
 
         .page-heading {
@@ -2045,887 +3108,1006 @@ export default function AdminDashboard() {
           align-items: flex-end;
           justify-content: space-between;
           gap: 20px;
+          margin-bottom: 22px;
         }
 
-        .eyebrow,
-        .modal-eyebrow {
-          color: #e31b23;
-          font-size: 10px;
-          font-weight: 900;
-          letter-spacing: 1.5px;
-        }
-
-        .page-heading h1 {
-          margin: 7px 0 5px;
-          font-size: 34px;
-          font-weight: 950;
+        .page-heading h2 {
+          margin: 0;
+          font-size: 20px;
         }
 
         .page-heading p {
-          margin: 0;
-          color: #777;
-          font-size: 15px;
+          margin: 5px 0 0;
+          color: #888;
+          font-size: 12px;
         }
 
-        .add-button {
-          border: none;
-          border-radius: 10px;
-          padding: 12px 18px;
-          background: #e31b23;
-          color: white;
-          font-size: 13px;
-          font-weight: 900;
-          cursor: pointer;
-          box-shadow: 0 6px 16px rgba(227, 27, 35, 0.2);
-          white-space: nowrap;
-        }
-
-        .add-button:hover {
-          transform: translateY(-1px);
-        }
-
-        .success-message,
-        .error-message {
-          margin-top: 22px;
+        .alert {
           padding: 12px 15px;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 700;
-        }
-
-        .success-message {
-          background: #edf9f0;
-          color: #24733b;
-          border: 1px solid #ccebd3;
-        }
-
-        .error-message {
-          background: #fff1f1;
-          color: #c5161d;
-          border: 1px solid #f4cccc;
-        }
-
-        .overview-header {
-          margin-top: 35px;
-          margin-bottom: 16px;
-        }
-
-        .overview-header h2 {
-          margin: 6px 0 4px;
-          font-size: 21px;
-        }
-
-        .overview-header p {
-          margin: 0;
-          color: #888;
-          font-size: 13px;
-        }
-
-        .overview-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 15px;
-        }
-
-        .secondary-overview {
-          grid-template-columns: repeat(2, 1fr);
-          margin-top: 15px;
-        }
-
-        .overview-card {
-          min-height: 125px;
+          border-radius: 8px;
+          margin-bottom: 20px;
           display: flex;
           align-items: center;
-          gap: 14px;
-          padding: 20px;
-          box-sizing: border-box;
-          border-radius: 15px;
-          background: white;
-          border: 1px solid #eeeeee;
-          box-shadow: 0 6px 25px rgba(0, 0, 0, 0.04);
-        }
-
-        .overview-icon {
-          width: 48px;
-          height: 48px;
-          flex-shrink: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 12px;
-          background: #fff1f1;
-          color: #e31b23;
-          font-size: 22px;
-          font-weight: 900;
-        }
-
-        .active-icon {
-          background: #edf9f0;
-          color: #24733b;
-        }
-
-        .inactive-icon {
-          background: #f1f1f1;
-          color: #888;
-        }
-
-        .weight-icon {
-          background: #f5f5f5;
-          color: #333;
-        }
-
-        .spin-icon {
-          background: #fff5f5;
-          color: #e31b23;
-        }
-
-        .overview-label {
-          color: #999;
-          font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 1px;
-        }
-
-        .overview-value {
-          margin-top: 4px;
-          color: #222;
-          font-size: 28px;
-          line-height: 1;
-          font-weight: 950;
-        }
-
-        .overview-description {
-          margin-top: 7px;
-          color: #999;
-          font-size: 10px;
-        }
-
-        .weight-info {
-          display: flex;
-          align-items: flex-start;
           gap: 10px;
-          margin-top: 15px;
-          padding: 12px 15px;
+          font-size: 12px;
+          font-weight: 600;
+        }
+
+        .alert.success {
+          background: #edf9f1;
+          border: 1px solid #cdebd6;
+          color: #20753c;
+        }
+
+        .alert.error {
+          background: #fff0f0;
+          border: 1px solid #f1cccc;
+          color: #b4232b;
+        }
+
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(
+            4,
+            minmax(0, 1fr)
+          );
+          gap: 16px;
+          margin-bottom: 20px;
+        }
+
+        .stat-card {
+          background: #fff;
           border: 1px solid #e8e8e8;
           border-radius: 10px;
-          background: white;
-        }
-
-        .weight-info-icon {
-          width: 20px;
-          height: 20px;
-          flex-shrink: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%;
-          background: #f0f0f0;
-          color: #777;
-          font-size: 11px;
-          font-weight: 900;
-        }
-
-        .weight-info strong {
-          color: #555;
-          font-size: 11px;
-        }
-
-        .weight-info p {
-          margin: 3px 0 0;
-          color: #999;
-          font-size: 10px;
-        }
-
-        .quick-actions {
-          margin-top: 35px;
-        }
-
-        .quick-actions-header {
-          margin-bottom: 15px;
-        }
-
-        .quick-actions-header h2 {
-          margin: 6px 0 0;
-          font-size: 21px;
-        }
-
-        .quick-actions-grid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 15px;
-        }
-
-        .quick-action-card {
+          padding: 19px;
           display: flex;
           align-items: center;
           gap: 14px;
-          padding: 18px;
-          border: 1px solid #e8e8e8;
-          border-radius: 14px;
-          background: white;
-          color: #222;
-          text-align: left;
-          cursor: pointer;
-          transition: 0.2s;
+          box-shadow: 0 2px 7px
+            rgba(0, 0, 0, 0.025);
         }
 
-        .quick-action-card:hover {
-          border-color: #e31b23;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 25px rgba(0, 0, 0, 0.06);
-        }
-
-        .quick-action-icon {
-          width: 42px;
-          height: 42px;
+        .stat-icon {
+          width: 43px;
+          height: 43px;
+          border-radius: 10px;
+          background: #fff1f1;
           display: flex;
           align-items: center;
           justify-content: center;
-          flex-shrink: 0;
-          border-radius: 11px;
-          background: #fff1f1;
           font-size: 19px;
+          flex-shrink: 0;
         }
 
-        .quick-action-card span:nth-child(2) {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
+        .stat-icon.green {
+          background: #edf9f1;
         }
 
-        .quick-action-card strong {
-          font-size: 13px;
+        .stat-icon.gray {
+          background: #f1f2f3;
         }
 
-        .quick-action-card small {
-          color: #999;
+        .stat-icon.red {
+          background: #fff1f1;
+        }
+
+        .stat-icon.purple {
+          background: #f3efff;
+        }
+
+        .stat-label {
+          color: #888;
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.9px;
+        }
+
+        .stat-value {
+          margin-top: 3px;
+          font-size: 24px;
+          font-weight: 850;
+        }
+
+        .stat-note {
+          margin-top: 3px;
+          color: #aaa;
           font-size: 10px;
         }
 
-        .quick-arrow {
-          margin-left: auto;
-          color: #aaa;
-          font-size: 18px;
+        .two-column {
+          display: grid;
+          grid-template-columns: 1.25fr 0.75fr;
+          gap: 20px;
+          margin-bottom: 20px;
         }
 
-        .section-header {
+        .panel {
+          background: #fff;
+          border: 1px solid #e8e8e8;
+          border-radius: 10px;
+          box-shadow: 0 2px 7px
+            rgba(0, 0, 0, 0.025);
+          overflow: hidden;
+        }
+
+        .panel-header {
+          padding: 19px 20px;
+          border-bottom: 1px solid #eee;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin: 35px 0 15px;
+          gap: 15px;
         }
 
-        .section-header h2 {
-          margin: 6px 0 4px;
-          font-size: 21px;
-        }
-
-        .section-header p {
+        .panel-header h3 {
           margin: 0;
-          color: #888;
+          font-size: 14px;
+        }
+
+        .panel-header p {
+          margin: 4px 0 0;
+          color: #999;
+          font-size: 11px;
+        }
+
+        .probability-list {
+          padding: 5px 20px;
+        }
+
+        .probability-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 15px;
+          padding: 14px 0;
+          border-bottom: 1px solid #f0f0f0;
+        }
+
+        .probability-row:last-child {
+          border-bottom: 0;
+        }
+
+        .probability-main {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .prize-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #c7c7c7;
+        }
+
+        .prize-dot.active {
+          background: #e31b23;
+        }
+
+        .probability-name {
+          font-size: 12px;
+          font-weight: 700;
+        }
+
+        .probability-weight {
+          margin-top: 2px;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .probability-value {
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .summary-list {
+          padding: 8px 20px 15px;
+        }
+
+        .summary-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px 0;
+          border-bottom: 1px solid #f0f0f0;
+          color: #777;
+          font-size: 12px;
+        }
+
+        .summary-row:last-child {
+          border-bottom: 0;
+        }
+
+        .summary-row strong {
+          color: #171717;
           font-size: 13px;
         }
 
-        .prize-count {
-          padding: 7px 11px;
-          border-radius: 20px;
-          background: white;
-          color: #777;
+        .quick-actions {
+          margin-bottom: 20px;
+        }
+
+        .action-grid {
+          display: grid;
+          grid-template-columns: repeat(
+            3,
+            1fr
+          );
+          gap: 12px;
+          padding: 18px;
+        }
+
+        .action-card {
+          border: 1px solid #e8e8e8;
+          background: #fafafa;
+          border-radius: 9px;
+          padding: 16px;
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .action-card:hover {
+          border-color: #e31b23;
+          background: #fff;
+        }
+
+        .action-card > span {
+          font-size: 21px;
+        }
+
+        .action-card strong {
+          display: block;
+          font-size: 12px;
+        }
+
+        .action-card small {
+          display: block;
+          margin-top: 4px;
+          color: #999;
+          line-height: 1.4;
+          font-size: 10px;
+        }
+
+        .primary-button,
+        .secondary-button,
+        .clear-button {
+          border-radius: 7px;
+          padding: 10px 15px;
           font-size: 11px;
           font-weight: 800;
-          border: 1px solid #e5e5e5;
+          cursor: pointer;
           white-space: nowrap;
         }
 
-        .table-card {
-          overflow: hidden;
-          border-radius: 16px;
-          background: white;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+        .primary-button {
+          border: 1px solid #e31b23;
+          background: #e31b23;
+          color: #fff;
         }
 
-        .table-wrapper {
+        .primary-button:hover {
+          background: #c9151d;
+        }
+
+        .primary-button:disabled,
+        .secondary-button:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .secondary-button {
+          border: 1px solid #ddd;
+          background: #fff;
+          color: #444;
+        }
+
+        .secondary-button:hover {
+          background: #f7f7f7;
+        }
+
+        .clear-button {
+          border: 0;
+          background: transparent;
+          color: #e31b23;
+          padding: 5px;
+        }
+
+        .loading-panel,
+        .empty-panel {
+          min-height: 250px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          padding: 30px;
+        }
+
+        .loading-panel p {
+          color: #888;
+          font-size: 12px;
+        }
+
+        .spinner {
+          width: 30px;
+          height: 30px;
+          border: 3px solid #eee;
+          border-top-color: #e31b23;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        .empty-icon {
+          font-size: 35px;
+          margin-bottom: 8px;
+        }
+
+        .empty-panel h3 {
+          margin: 0;
+          font-size: 15px;
+        }
+
+        .empty-panel p {
+          margin: 6px 0 18px;
+          color: #999;
+          font-size: 11px;
+        }
+
+        .empty-state {
+          padding: 35px 20px;
+          text-align: center;
+          color: #999;
+          font-size: 12px;
+        }
+
+        .empty-state.small {
+          padding: 25px 0;
+        }
+
+        .table-wrapper,
+        .history-table-wrapper {
+          width: 100%;
           overflow-x: auto;
         }
 
-        table {
+        .data-table {
           width: 100%;
           border-collapse: collapse;
           min-width: 850px;
         }
 
-        th {
-          padding: 15px 18px;
+        .data-table th {
           background: #fafafa;
-          border-bottom: 1px solid #eee;
           color: #888;
           font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 1px;
+          font-weight: 800;
+          letter-spacing: 0.7px;
+          text-transform: uppercase;
           text-align: left;
+          padding: 13px 16px;
+          border-bottom: 1px solid #e8e8e8;
+          white-space: nowrap;
         }
 
-        td {
-          padding: 17px 18px;
+        .data-table td {
+          padding: 15px 16px;
           border-bottom: 1px solid #f0f0f0;
+          font-size: 11px;
           vertical-align: middle;
         }
 
-        tr:last-child td {
-          border-bottom: none;
+        .data-table tbody tr:hover {
+          background: #fcfcfc;
         }
 
-        .order-number {
+        .table-prize strong {
+          display: block;
+          font-size: 12px;
+        }
+
+        .table-prize small {
+          display: block;
+          max-width: 250px;
+          margin-top: 3px;
+          color: #999;
+          line-height: 1.3;
+        }
+
+        .order-badge {
           display: inline-flex;
-          width: 30px;
-          height: 30px;
           align-items: center;
           justify-content: center;
-          border-radius: 8px;
-          background: #f5f5f5;
+          width: 27px;
+          height: 27px;
+          border-radius: 7px;
+          background: #f1f2f3;
           color: #555;
-          font-size: 12px;
-          font-weight: 900;
-        }
-
-        .prize-name {
-          color: #222;
-          font-size: 14px;
-          font-weight: 850;
-        }
-
-        .prize-description {
-          margin-top: 4px;
-          color: #999;
-          font-size: 11px;
-        }
-
-        .weight {
-          display: inline-flex;
-          min-width: 42px;
-          justify-content: center;
-          padding: 7px 9px;
-          border-radius: 7px;
-          background: #f7f7f7;
-          color: #333;
-          font-size: 12px;
-          font-weight: 900;
-        }
-
-        .coupon-prefix {
-          display: inline-block;
-          padding: 6px 9px;
-          border-radius: 7px;
-          background: #fff5f5;
-          color: #c5161d;
-          font-family: monospace;
-          font-size: 11px;
-          font-weight: 900;
-        }
-
-        .status {
-          padding: 7px 10px;
-          border: none;
-          border-radius: 20px;
-          font-size: 9px;
-          font-weight: 900;
-          cursor: pointer;
-        }
-
-        .status.active {
-          background: #edf9f0;
-          color: #24733b;
-        }
-
-        .status.inactive {
-          background: #f1f1f1;
-          color: #888;
-        }
-
-        .actions {
-          display: flex;
-          gap: 7px;
-        }
-
-        .edit-button,
-        .delete-button {
-          padding: 7px 10px;
-          border-radius: 7px;
-          font-size: 10px;
           font-weight: 800;
-          cursor: pointer;
         }
 
-        .edit-button {
+        .coupon-prefix,
+        .coupon-code {
+          display: inline-block;
+          border-radius: 5px;
+          background: #f4f4f4;
+          padding: 6px 8px;
+          color: #333;
+          font-family: monospace;
+          font-size: 10px;
+          font-weight: 700;
+        }
+
+        .status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 20px;
+          padding: 6px 9px;
+          font-size: 9px;
+          font-weight: 800;
+        }
+
+        .status-badge span {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+        }
+
+        .status-badge.active {
+          background: #edf9f1;
+          color: #23753e;
+        }
+
+        .status-badge.active span {
+          background: #2aa054;
+        }
+
+        .status-badge.inactive {
+          background: #f2f2f2;
+          color: #777;
+        }
+
+        .status-badge.inactive span {
+          background: #999;
+        }
+
+        .table-actions {
+          display: flex;
+          gap: 5px;
+        }
+
+        .small-button {
+          border-radius: 5px;
           border: 1px solid #ddd;
-          background: white;
+          background: #fff;
+          padding: 6px 8px;
+          cursor: pointer;
+          font-size: 9px;
+          font-weight: 800;
+        }
+
+        .small-button.edit {
           color: #444;
         }
 
-        .delete-button {
-          border: 1px solid #f0cccc;
-          background: #fff7f7;
-          color: #c5161d;
+        .small-button.warning {
+          color: #a26c00;
         }
 
-        .delete-button:disabled {
+        .small-button.success {
+          color: #23753e;
+        }
+
+        .small-button.danger {
+          color: #c51f28;
+        }
+
+        .small-button:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
 
-        .loading-box,
-        .empty-box {
-          padding: 60px 20px;
-          border-radius: 16px;
-          background: white;
-          text-align: center;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
+        .filter-panel {
+          padding: 0;
+          margin-bottom: 18px;
         }
 
-        .loading-box {
-          color: #888;
-          font-size: 14px;
+        .filter-header {
+          padding: 18px 20px;
+          border-bottom: 1px solid #eee;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 15px;
         }
 
-        .empty-icon {
-          font-size: 40px;
-        }
-
-        .empty-box h3 {
-          margin: 15px 0 6px;
-        }
-
-        .empty-box p {
-          margin: 0 0 20px;
-          color: #888;
+        .filter-header h3 {
+          margin: 0;
           font-size: 13px;
         }
 
-        .refresh-button {
-          padding: 11px 16px;
-          border: 1px solid #ddd;
-          border-radius: 9px;
-          background: white;
-          color: #444;
-          font-size: 12px;
-          font-weight: 900;
-          cursor: pointer;
+        .filter-header p {
+          margin: 4px 0 0;
+          color: #999;
+          font-size: 10px;
         }
 
-        .refresh-button:hover {
-          border-color: #bbb;
-          background: #fafafa;
-        }
-
-        .refresh-button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .history-summary {
+        .filters-grid {
           display: grid;
-          grid-template-columns: 250px;
-          margin-top: 30px;
+          grid-template-columns: 2fr 1fr 1fr 1fr;
+          gap: 12px;
+          padding: 17px 20px 10px;
         }
 
-        .history-summary-card {
-          display: flex;
-          align-items: center;
-          gap: 13px;
-          padding: 16px;
-          border: 1px solid #e8e8e8;
-          border-radius: 14px;
-          background: white;
-          box-shadow: 0 6px 25px rgba(0, 0, 0, 0.04);
+        .filter-field label,
+        .form-group label {
+          display: block;
+          margin-bottom: 6px;
+          color: #555;
+          font-size: 10px;
+          font-weight: 800;
         }
 
-        .history-summary-icon {
-          width: 44px;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 11px;
-          background: #fff1f1;
-          color: #e31b23;
-          font-size: 21px;
-          font-weight: 900;
+        .filter-field input,
+        .filter-field select,
+        .form-group input,
+        .form-group textarea {
+          width: 100%;
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          background: #fff;
+          padding: 10px 11px;
+          outline: none;
+          font: inherit;
+          font-size: 11px;
+          color: #222;
         }
 
-        .history-summary-value {
-          margin-top: 3px;
-          font-size: 25px;
-          font-weight: 950;
-          line-height: 1;
+        .filter-field input:focus,
+        .filter-field select:focus,
+        .form-group input:focus,
+        .form-group textarea:focus {
+          border-color: #e31b23;
+          box-shadow: 0 0 0 2px
+            rgba(227, 27, 35, 0.08);
         }
 
-        .history-table-card {
-          margin-top: 18px;
-          overflow: hidden;
-          border-radius: 16px;
-          background: white;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+        .input-with-icon {
+          position: relative;
         }
 
-        .history-table-wrapper {
-          overflow-x: auto;
+        .input-with-icon > span {
+          position: absolute;
+          left: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          font-size: 12px;
+        }
+
+        .input-with-icon input {
+          padding-left: 31px;
+        }
+
+        .filter-result {
+          padding: 9px 20px 16px;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .filter-result strong {
+          color: #444;
         }
 
         .history-table {
-          min-width: 850px;
+          min-width: 900px;
         }
 
-        .history-date {
-          color: #555;
-          font-size: 12px;
+        .date-cell {
+          color: #666;
+          white-space: nowrap;
+        }
+
+        .mobile-number {
+          color: #222;
+          font-family: monospace;
+          font-size: 11px;
           font-weight: 700;
           white-space: nowrap;
         }
 
-        .history-mobile {
-          display: inline-block;
-          padding: 6px 9px;
-          border-radius: 7px;
-          background: #f7f7f7;
-          color: #555;
-          font-family: monospace;
-          font-size: 11px;
-          font-weight: 800;
-          white-space: nowrap;
-        }
-
         .history-prize {
-          color: #222;
-          font-size: 13px;
-          font-weight: 850;
+          display: flex;
+          align-items: center;
+          gap: 8px;
         }
 
-        .history-coupon {
-          display: inline-block;
-          padding: 7px 10px;
-          border-radius: 7px;
-          background: #fff5f5;
-          color: #c5161d;
-          font-family: monospace;
-          font-size: 11px;
-          font-weight: 900;
-          white-space: nowrap;
+        .history-prize-icon {
+          width: 27px;
+          height: 27px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 6px;
+          background: #fff2f2;
         }
 
         .history-status {
           display: inline-block;
-          padding: 7px 10px;
+          padding: 6px 9px;
           border-radius: 20px;
           font-size: 9px;
-          font-weight: 900;
-          white-space: nowrap;
+          font-weight: 800;
+          text-transform: capitalize;
         }
 
         .history-status.issued {
-          background: #edf9f0;
-          color: #24733b;
+          background: #edf9f1;
+          color: #23753e;
         }
 
         .history-status.redeemed {
-          background: #fff5e8;
-          color: #a76400;
+          background: #f3efff;
+          color: #6941c6;
         }
 
         .history-status.other {
-          background: #f1f1f1;
+          background: #f2f2f2;
           color: #777;
         }
 
-        .history-loading,
-        .history-empty {
-          margin-top: 18px;
-          padding: 65px 20px;
-          border-radius: 16px;
-          background: white;
-          text-align: center;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
-        }
-
-        .history-loader {
-          width: 45px;
-          height: 45px;
-          margin: 0 auto 15px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%;
-          background: #fff1f1;
-          color: #e31b23;
-          font-size: 22px;
-          font-weight: 900;
-        }
-
-        .history-loading h3,
-        .history-empty h3 {
-          margin: 0 0 6px;
-          font-size: 16px;
-        }
-
-        .history-loading p,
-        .history-empty p {
-          margin: 0;
-          color: #888;
-          font-size: 12px;
-        }
-
-        .history-empty-icon {
-          font-size: 42px;
-          margin-bottom: 13px;
-        }
-
-        .history-error {
+        .history-footer {
+          padding: 12px 16px;
+          border-top: 1px solid #eee;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 20px;
-          margin-top: 22px;
-          padding: 14px 16px;
-          border: 1px solid #f4cccc;
-          border-radius: 10px;
-          background: #fff1f1;
-          color: #c5161d;
-        }
-
-        .history-error strong {
-          font-size: 12px;
-        }
-
-        .history-error p {
-          margin: 4px 0 0;
-          color: #a85b5f;
-          font-size: 11px;
-        }
-
-        .history-error button {
-          flex-shrink: 0;
-          padding: 8px 13px;
-          border: 1px solid #e5bcbc;
-          border-radius: 7px;
-          background: white;
-          color: #c5161d;
-          font-size: 10px;
-          font-weight: 900;
-          cursor: pointer;
-        }
-
-        .history-note {
-          display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          margin-top: 15px;
-          padding: 12px 15px;
-          border: 1px solid #e8e8e8;
-          border-radius: 10px;
-          background: white;
-        }
-
-        .history-note strong {
-          color: #555;
-          font-size: 11px;
-        }
-
-        .history-note p {
-          margin: 3px 0 0;
+          gap: 15px;
           color: #999;
           font-size: 10px;
         }
 
-        .modal-overlay {
+        .error-panel {
+          padding: 20px;
+          display: flex;
+          align-items: center;
+          gap: 13px;
+          margin-bottom: 18px;
+        }
+
+        .error-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          background: #fff0f0;
+          color: #c51f28;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 900;
+          flex-shrink: 0;
+        }
+
+        .error-panel h3 {
+          margin: 0;
+          font-size: 13px;
+        }
+
+        .error-panel p {
+          margin: 4px 0 0;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .error-panel .secondary-button {
+          margin-left: auto;
+        }
+
+        .statistics-grid {
+          display: grid;
+          grid-template-columns: 1.3fr 0.7fr;
+          gap: 20px;
+          margin-bottom: 20px;
+        }
+
+        .distribution-list {
+          padding: 8px 20px 18px;
+        }
+
+        .distribution-item {
+          padding: 14px 0;
+          border-bottom: 1px solid #f0f0f0;
+        }
+
+        .distribution-item:last-child {
+          border-bottom: 0;
+        }
+
+        .distribution-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 15px;
+          margin-bottom: 8px;
+        }
+
+        .distribution-top div {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .distribution-top strong {
+          font-size: 11px;
+        }
+
+        .distribution-top span {
+          color: #999;
+          font-size: 9px;
+        }
+
+        .progress-track {
+          height: 7px;
+          background: #eee;
+          border-radius: 20px;
+          overflow: hidden;
+        }
+
+        .progress-bar {
+          height: 100%;
+          background: #e31b23;
+          border-radius: inherit;
+          transition: width 0.3s;
+        }
+
+        .coupon-stat-card {
+          margin: 15px 20px;
+          padding: 13px;
+          border: 1px solid #eee;
+          border-radius: 8px;
+        }
+
+        .coupon-stat-top {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+
+        .coupon-stat-icon {
+          width: 33px;
+          height: 33px;
+          border-radius: 7px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #edf9f1;
+        }
+
+        .coupon-stat-icon.redeemed {
+          background: #f3efff;
+        }
+
+        .coupon-stat-top div:nth-child(2) {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+        }
+
+        .coupon-stat-top span {
+          color: #999;
+          font-size: 9px;
+        }
+
+        .coupon-stat-top strong {
+          font-size: 15px;
+        }
+
+        .coupon-stat-top > b {
+          font-size: 11px;
+        }
+
+        .statistics-summary {
+          margin: 8px 20px 20px;
+          border-top: 1px solid #eee;
+        }
+
+        .statistics-summary > div {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 0;
+          border-bottom: 1px solid #f0f0f0;
+          color: #777;
+          font-size: 10px;
+        }
+
+        .statistics-summary strong {
+          color: #222;
+        }
+
+        .recent-list {
+          padding: 4px 20px 10px;
+        }
+
+        .recent-item {
+          display: flex;
+          align-items: center;
+          gap: 11px;
+          padding: 12px 0;
+          border-bottom: 1px solid #f0f0f0;
+        }
+
+        .recent-item:last-child {
+          border-bottom: 0;
+        }
+
+        .recent-icon {
+          width: 34px;
+          height: 34px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+          background: #fff2f2;
+        }
+
+        .recent-content {
+          min-width: 0;
+          flex: 1;
+        }
+
+        .recent-content strong {
+          display: block;
+          font-size: 11px;
+        }
+
+        .recent-content span {
+          display: block;
+          margin-top: 3px;
+          color: #888;
+          font-family: monospace;
+          font-size: 9px;
+        }
+
+        .recent-right {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
+        }
+
+        .recent-right small {
+          color: #999;
+          font-size: 8px;
+        }
+
+        .modal-backdrop {
           position: fixed;
           inset: 0;
-          z-index: 1000;
+          z-index: 300;
+          background: rgba(0, 0, 0, 0.55);
           display: flex;
           align-items: center;
           justify-content: center;
           padding: 20px;
-          box-sizing: border-box;
-          background: rgba(0, 0, 0, 0.48);
         }
 
         .modal {
-          width: 100%;
-          max-width: 560px;
-          max-height: 92vh;
+          width: min(620px, 100%);
+          max-height: 90vh;
           overflow-y: auto;
-          padding: 28px;
-          box-sizing: border-box;
-          border-radius: 20px;
-          background: white;
-          box-shadow: 0 25px 80px rgba(0, 0, 0, 0.25);
+          border-radius: 12px;
+          background: #fff;
+          box-shadow: 0 20px 70px
+            rgba(0, 0, 0, 0.25);
         }
 
         .modal-header {
+          padding: 20px;
+          border-bottom: 1px solid #eee;
           display: flex;
-          align-items: flex-start;
           justify-content: space-between;
-          margin-bottom: 25px;
+          gap: 20px;
         }
 
         .modal-header h2 {
-          margin: 5px 0 0;
-          font-size: 25px;
+          margin: 0;
+          font-size: 17px;
         }
 
-        .close-button {
-          width: 34px;
-          height: 34px;
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          background: white;
-          color: #666;
-          font-size: 22px;
-          cursor: pointer;
-        }
-
-        .form-field {
-          margin-bottom: 17px;
-        }
-
-        .form-field label {
-          display: block;
-          margin-bottom: 7px;
-          color: #333;
-          font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 0.8px;
-        }
-
-        .form-field input,
-        .form-field textarea {
-          width: 100%;
-          box-sizing: border-box;
-          padding: 12px;
-          border: 1px solid #ddd;
-          border-radius: 9px;
-          background: white;
-          color: #222;
-          font-family: inherit;
-          font-size: 14px;
-          outline: none;
-        }
-
-        .form-field textarea {
-          resize: vertical;
-        }
-
-        .form-field input:focus,
-        .form-field textarea:focus {
-          border-color: #e31b23;
-          box-shadow: 0 0 0 3px rgba(227, 27, 35, 0.07);
-        }
-
-        .form-field small {
-          display: block;
-          margin-top: 5px;
+        .modal-header p {
+          margin: 4px 0 0;
           color: #999;
           font-size: 10px;
+        }
+
+        .modal-close {
+          width: 30px;
+          height: 30px;
+          border: 0;
+          border-radius: 6px;
+          background: #f3f3f3;
+          color: #555;
+          font-size: 21px;
+          cursor: pointer;
         }
 
         .form-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 15px;
+          padding: 20px;
         }
 
-        .active-toggle {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 20px;
-          margin: 8px 0 20px;
-          padding: 14px;
-          border-radius: 10px;
-          background: #f8f8f8;
+        .form-group.full {
+          grid-column: 1 / -1;
         }
 
-        .active-toggle strong {
-          font-size: 13px;
-        }
-
-        .active-toggle p {
-          margin: 3px 0 0;
-          color: #888;
-          font-size: 11px;
-        }
-
-        .toggle {
-          width: 48px;
-          height: 27px;
-          padding: 3px;
-          border: none;
-          border-radius: 20px;
-          background: #ccc;
-          cursor: pointer;
-          transition: 0.2s;
-        }
-
-        .toggle span {
+        .form-group small {
           display: block;
-          width: 21px;
-          height: 21px;
+          margin-top: 4px;
+          color: #999;
+          font-size: 9px;
+        }
+
+        .switch-row {
+          height: 39px;
+          display: flex !important;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+        }
+
+        .switch-row input {
+          display: none;
+        }
+
+        .switch {
+          width: 35px;
+          height: 20px;
+          background: #ccc;
+          border-radius: 20px;
+          position: relative;
+        }
+
+        .switch::after {
+          content: "";
+          position: absolute;
+          top: 3px;
+          left: 3px;
+          width: 14px;
+          height: 14px;
           border-radius: 50%;
-          background: white;
+          background: #fff;
           transition: 0.2s;
         }
 
-        .toggle.on {
+        .switch-row input:checked
+          + .switch {
           background: #e31b23;
         }
 
-        .toggle.on span {
-          transform: translateX(21px);
+        .switch-row input:checked
+          + .switch::after {
+          transform: translateX(15px);
         }
 
-        .form-error {
-          margin-bottom: 15px;
-          padding: 10px;
-          border-radius: 8px;
-          background: #fff1f1;
-          color: #c5161d;
-          font-size: 12px;
-        }
-
-        .modal-actions {
+        .modal-footer {
+          padding: 15px 20px 20px;
+          border-top: 1px solid #eee;
           display: flex;
           justify-content: flex-end;
-          gap: 10px;
-          padding-top: 5px;
-        }
-
-        .cancel-button,
-        .save-button {
-          padding: 12px 17px;
-          border-radius: 9px;
-          font-size: 12px;
-          font-weight: 900;
-          cursor: pointer;
-        }
-
-        .cancel-button {
-          border: 1px solid #ddd;
-          background: white;
-          color: #555;
-        }
-
-        .save-button {
-          border: none;
-          background: #e31b23;
-          color: white;
-        }
-
-        .cancel-button:disabled,
-        .save-button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .mobile-toolbar {
-          display: none;
+          gap: 8px;
         }
 
         .sidebar-overlay {
@@ -2933,87 +4115,81 @@ export default function AdminDashboard() {
         }
 
         @media (max-width: 1100px) {
-          .overview-grid {
-            grid-template-columns: repeat(2, 1fr);
+          .stats-grid {
+            grid-template-columns: repeat(
+              2,
+              1fr
+            );
           }
 
-          .sidebar {
-            width: 220px;
+          .two-column,
+          .statistics-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .filters-grid {
+            grid-template-columns: 1fr 1fr;
           }
         }
 
         @media (max-width: 800px) {
-          .admin-header {
-            min-height: 60px;
-            padding: 10px 15px;
-          }
-
-          .admin-header .header-brand {
-            display: none;
-          }
-
-          .admin-layout {
-            min-height: calc(100vh - 60px);
-          }
-
           .sidebar {
-            position: fixed;
-            left: 0;
-            top: 60px;
-            bottom: 0;
-            height: auto;
-            width: 270px;
-            transform: translateX(-100%);
-            transition: transform 0.25s ease;
-            box-shadow: 15px 0 50px rgba(0, 0, 0, 0.18);
+            transform: translateX(
+              -100%
+            );
+            transition: transform 0.25s
+              ease;
           }
 
-          .sidebar.sidebar-open {
+          .sidebar.open {
             transform: translateX(0);
+          }
+
+          .mobile-close {
+            display: block;
           }
 
           .sidebar-overlay {
             display: block;
             position: fixed;
-            inset: 60px 0 0;
-            z-index: 30;
-            background: rgba(0, 0, 0, 0.4);
+            inset: 0;
+            z-index: 90;
+            border: 0;
+            background: rgba(0, 0, 0, 0.45);
           }
 
-          .admin-content {
-            padding: 20px 15px 50px;
+          .main-area {
+            margin-left: 0;
           }
 
-          .mobile-toolbar {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 25px;
+          .mobile-menu {
+            display: block;
           }
 
-          .mobile-menu-button {
-            width: 40px;
-            height: 40px;
-            border: 1px solid #ddd;
-            border-radius: 9px;
-            background: white;
-            color: #333;
-            font-size: 20px;
-            cursor: pointer;
+          .header-right {
+            display: none;
           }
 
-          .mobile-toolbar-title {
-            font-size: 14px;
-            font-weight: 950;
-            letter-spacing: 0.7px;
+          .admin-header {
+            padding: 14px 18px;
           }
 
-          .mobile-toolbar-subtitle {
-            margin-top: 2px;
-            color: #e31b23;
-            font-size: 7px;
-            font-weight: 900;
-            letter-spacing: 1.5px;
+          .content {
+            padding: 20px 15px;
+          }
+
+          .action-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 600px) {
+          .stats-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .filters-grid {
+            grid-template-columns: 1fr;
           }
 
           .page-heading {
@@ -3021,64 +4197,57 @@ export default function AdminDashboard() {
             flex-direction: column;
           }
 
-          .page-heading h1 {
-            font-size: 28px;
-          }
-
-          .page-heading .add-button,
-          .page-heading .refresh-button {
+          .page-heading
+            .primary-button,
+          .page-heading
+            .secondary-button {
             width: 100%;
           }
 
-          .quick-actions-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .history-summary {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        @media (max-width: 650px) {
-          .admin-email {
-            display: none;
-          }
-
-          .header-right button {
-            padding: 8px 12px;
-          }
-
-          .overview-grid,
-          .secondary-overview {
-            grid-template-columns: 1fr;
-          }
-
-          .overview-card {
-            min-height: 105px;
-          }
-
-          .section-header {
-            align-items: flex-start;
-            gap: 10px;
-          }
-
-          .form-grid {
-            grid-template-columns: 1fr;
-            gap: 0;
-          }
-
-          .modal {
-            padding: 22px 18px;
-            border-radius: 17px;
-          }
-
-          .history-error {
+          .filter-header {
             align-items: flex-start;
             flex-direction: column;
           }
 
-          .history-error button {
+          .clear-button {
+            padding: 0;
+          }
+
+          .form-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .form-group.full {
+            grid-column: auto;
+          }
+
+          .history-footer {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .history-footer
+            .secondary-button {
             width: 100%;
+          }
+
+          .error-panel {
+            align-items: flex-start;
+            flex-wrap: wrap;
+          }
+
+          .error-panel
+            .secondary-button {
+            width: 100%;
+            margin-left: 0;
+          }
+
+          .recent-item {
+            align-items: flex-start;
+          }
+
+          .recent-right {
+            display: none;
           }
         }
       `}</style>
