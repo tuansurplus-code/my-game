@@ -2,6 +2,9 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { supabase } from "../../lib/supabase";
 
 type ActiveTab = "overview" | "prizes" | "history" | "statistics";
@@ -84,6 +87,10 @@ export default function AdminDashboard() {
     useState("all");
   const [historyDateFilter, setHistoryDateFilter] =
     useState("all");
+
+  const [exporting, setExporting] = useState<
+    "excel" | "pdf" | null
+  >(null);
 
   const [showForm, setShowForm] = useState(false);
   const [editingPrize, setEditingPrize] =
@@ -721,6 +728,264 @@ export default function AdminDashboard() {
     setHistoryPrizeFilter("all");
     setHistoryStatusFilter("all");
     setHistoryDateFilter("all");
+  }
+
+  function exportHistoryToExcel() {
+    if (filteredHistory.length === 0) {
+      setError(
+        "There are no winner records to export."
+      );
+      return;
+    }
+
+    try {
+      setExporting("excel");
+      setError("");
+      setMessage("");
+
+      const reportData = filteredHistory.map(
+        (record) => ({
+          "Date & Time": formatDateTime(
+            record.created_at
+          ),
+          Mobile: record.mobile,
+          Prize: record.prize_name,
+          "Coupon Code": record.coupon_code,
+          "Coupon Status":
+            record.coupon_status.toUpperCase(),
+        })
+      );
+
+      const worksheet =
+        XLSX.utils.json_to_sheet(
+          reportData
+        );
+
+      worksheet["!cols"] = [
+        { wch: 24 },
+        { wch: 18 },
+        { wch: 30 },
+        { wch: 20 },
+        { wch: 18 },
+      ];
+
+      const workbook =
+        XLSX.utils.book_new();
+
+      XLSX.utils.book_append_sheet(
+        workbook,
+        worksheet,
+        "Winner History"
+      );
+
+      const date = new Date()
+        .toISOString()
+        .slice(0, 10);
+
+      XLSX.writeFile(
+        workbook,
+        `Singhagiri-Spin-Win-Winner-History-${date}.xlsx`
+      );
+
+      setMessage(
+        "Winner history Excel report downloaded successfully."
+      );
+    } catch (error) {
+      console.error(error);
+
+      setError(
+        "Unable to generate the Excel report."
+      );
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  function exportHistoryToPDF() {
+    if (filteredHistory.length === 0) {
+      setError(
+        "There are no winner records to export."
+      );
+      return;
+    }
+
+    try {
+      setExporting("pdf");
+      setError("");
+      setMessage("");
+
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const generatedAt =
+        new Date().toLocaleString(
+          "en-LK",
+          {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }
+        );
+
+      doc.setFontSize(20);
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        "SINGHAGIRI",
+        14,
+        18
+      );
+
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "normal");
+      doc.text(
+        "SPIN & WIN - WINNER HISTORY REPORT",
+        14,
+        26
+      );
+
+      doc.setFontSize(9);
+      doc.text(
+        `Generated: ${generatedAt}`,
+        14,
+        33
+      );
+
+      doc.text(
+        `Total Records: ${filteredHistory.length}`,
+        14,
+        39
+      );
+
+      const filters: string[] = [];
+
+      if (historySearch.trim()) {
+        filters.push(
+          `Search: ${historySearch.trim()}`
+        );
+      }
+
+      if (historyPrizeFilter !== "all") {
+        const selectedPrize =
+          historyPrizeOptions.find(
+            (prize) =>
+              prize.id ===
+              historyPrizeFilter
+          );
+
+        if (selectedPrize) {
+          filters.push(
+            `Prize: ${selectedPrize.name}`
+          );
+        }
+      }
+
+      if (
+        historyStatusFilter !== "all"
+      ) {
+        filters.push(
+          `Status: ${historyStatusFilter.toUpperCase()}`
+        );
+      }
+
+      if (
+        historyDateFilter !== "all"
+      ) {
+        const dateLabel =
+          historyDateFilter ===
+          "today"
+            ? "Today"
+            : historyDateFilter ===
+                "7days"
+              ? "Last 7 Days"
+              : "Last 30 Days";
+
+        filters.push(
+          `Date: ${dateLabel}`
+        );
+      }
+
+      if (filters.length > 0) {
+        doc.text(
+          `Filters: ${filters.join(" | ")}`,
+          14,
+          45
+        );
+      }
+
+      autoTable(doc, {
+        startY:
+          filters.length > 0
+            ? 52
+            : 45,
+        head: [
+          [
+            "Date & Time",
+            "Mobile",
+            "Prize",
+            "Coupon Code",
+            "Status",
+          ],
+        ],
+        body: filteredHistory.map(
+          (record) => [
+            formatDateTime(
+              record.created_at
+            ),
+            record.mobile,
+            record.prize_name,
+            record.coupon_code,
+            record.coupon_status.toUpperCase(),
+          ]
+        ),
+        theme: "grid",
+        styles: {
+          fontSize: 8,
+          cellPadding: 3,
+        },
+        headStyles: {
+          fontStyle: "bold",
+        },
+        columnStyles: {
+          0: {
+            cellWidth: 42,
+          },
+          1: {
+            cellWidth: 35,
+          },
+          2: {
+            cellWidth: 55,
+          },
+          3: {
+            cellWidth: 45,
+          },
+          4: {
+            cellWidth: 30,
+          },
+        },
+      });
+
+      const date = new Date()
+        .toISOString()
+        .slice(0, 10);
+
+      doc.save(
+        `Singhagiri-Spin-Win-Winner-History-${date}.pdf`
+      );
+
+      setMessage(
+        "Winner history PDF report downloaded successfully."
+      );
+    } catch (error) {
+      console.error(error);
+
+      setError(
+        "Unable to generate the PDF report."
+      );
+    } finally {
+      setExporting(null);
+    }
   }
 
   const issuedCount = history.filter(
@@ -1613,17 +1878,49 @@ export default function AdminDashboard() {
                   </p>
                 </div>
 
-                <button
-                  className="refresh-button"
-                  onClick={loadHistory}
-                  disabled={
-                    loadingHistory
-                  }
-                >
-                  {loadingHistory
-                    ? "Refreshing..."
-                    : "↻ Refresh"}
-                </button>
+                <div className="history-action-buttons">
+                  <button
+                    className="export-button"
+                    onClick={
+                      exportHistoryToExcel
+                    }
+                    disabled={
+                      exporting !== null ||
+                      filteredHistory.length === 0
+                    }
+                  >
+                    {exporting === "excel"
+                      ? "Preparing..."
+                      : "📊 Excel"}
+                  </button>
+
+                  <button
+                    className="export-button"
+                    onClick={
+                      exportHistoryToPDF
+                    }
+                    disabled={
+                      exporting !== null ||
+                      filteredHistory.length === 0
+                    }
+                  >
+                    {exporting === "pdf"
+                      ? "Preparing..."
+                      : "📄 PDF"}
+                  </button>
+
+                  <button
+                    className="refresh-button"
+                    onClick={loadHistory}
+                    disabled={
+                      loadingHistory
+                    }
+                  >
+                    {loadingHistory
+                      ? "Refreshing..."
+                      : "↻ Refresh"}
+                  </button>
+                </div>
               </div>
 
               {historyError && (
@@ -1646,6 +1943,18 @@ export default function AdminDashboard() {
                   >
                     Retry
                   </button>
+                </div>
+              )}
+
+              {message && (
+                <div className="success-message">
+                  ✓ {message}
+                </div>
+              )}
+
+              {error && (
+                <div className="error-message">
+                  ! {error}
                 </div>
               )}
 
@@ -3343,6 +3652,36 @@ export default function AdminDashboard() {
           cursor: not-allowed;
         }
 
+        .history-action-buttons {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .export-button {
+          padding: 10px 13px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          background: white;
+          color: #444;
+          font-size: 10px;
+          font-weight: 900;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .export-button:hover:not(:disabled) {
+          border-color: #bbb;
+          background: #fafafa;
+        }
+
+        .export-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
         .history-summary {
           display: grid;
           grid-template-columns: 250px;
@@ -4115,6 +4454,16 @@ export default function AdminDashboard() {
             width: 100%;
           }
 
+          .history-action-buttons {
+            width: 100%;
+            justify-content: stretch;
+          }
+
+          .history-action-buttons .export-button,
+          .history-action-buttons .refresh-button {
+            flex: 1;
+          }
+
           .quick-actions-grid {
             grid-template-columns: 1fr;
           }
@@ -4196,6 +4545,16 @@ export default function AdminDashboard() {
 
           .history-error button {
             width: 100%;
+          }
+
+          .history-action-buttons {
+            flex-direction: column;
+          }
+
+          .history-action-buttons .export-button,
+          .history-action-buttons .refresh-button {
+            width: 100%;
+            flex: none;
           }
 
           .statistics-card {
