@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
@@ -23,104 +23,204 @@ type PrizeForm = {
   active: boolean;
 };
 
-const emptyForm: PrizeForm = {
-  name: "",
-  description: "",
-  weight: "1",
-  coupon_prefix: "",
-  sort_order: "1",
-  active: true,
+type SpinHistory = {
+  id: string;
+  mobile: string;
+  created_at: string;
+  prize_id: string | null;
+  coupon_id: string | null;
+  prizes:
+    | {
+        name: string;
+      }
+    | {
+        name: string;
+      }[]
+    | null;
+  coupons:
+    | {
+        code: string;
+        status: string;
+      }
+    | {
+        code: string;
+        status: string;
+      }[]
+    | null;
 };
 
-export default function AdminDashboard() {
+export default function AdminPage() {
   const router = useRouter();
 
-  const [checking, setChecking] = useState(true);
-  const [email, setEmail] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
 
+  // -----------------------------
+  // Prize Management
+  // -----------------------------
   const [prizes, setPrizes] = useState<Prize[]>([]);
-  const [loadingPrizes, setLoadingPrizes] = useState(false);
+  const [loadingPrizes, setLoadingPrizes] = useState(true);
 
-  const [showForm, setShowForm] = useState(false);
-  const [editingPrize, setEditingPrize] = useState<Prize | null>(null);
-  const [form, setForm] = useState<PrizeForm>(emptyForm);
+  const [showPrizeForm, setShowPrizeForm] = useState(false);
+  const [editingPrizeId, setEditingPrizeId] = useState<string | null>(null);
 
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [prizeForm, setPrizeForm] = useState<PrizeForm>({
+    name: "",
+    description: "",
+    weight: "1",
+    coupon_prefix: "",
+    sort_order: "0",
+    active: true,
+  });
 
+  const [savingPrize, setSavingPrize] = useState(false);
+
+  // -----------------------------
+  // Spin History
+  // -----------------------------
+  const [history, setHistory] = useState<SpinHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [refreshingHistory, setRefreshingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+
+  // -----------------------------
+  // Page initialization
+  // -----------------------------
   useEffect(() => {
     checkAdmin();
   }, []);
 
   async function checkAdmin() {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+      if (!user) {
+        router.replace("/admin/login");
+        return;
+      }
+
+      // Check whether the logged-in user is an admin
+      const { data: adminUser, error } = await supabase
+        .from("admin_users")
+        .select("user_id, email")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Admin check error:", error);
+        router.replace("/admin/login");
+        return;
+      }
+
+      if (!adminUser) {
+        await supabase.auth.signOut();
+        router.replace("/admin/login");
+        return;
+      }
+
+      setAdminEmail(adminUser.email || user.email || "");
+
+      await Promise.all([loadPrizes(), loadHistory()]);
+    } catch (error) {
+      console.error("Admin initialization error:", error);
       router.replace("/admin/login");
-      return;
     }
-
-    const { data: admin, error: adminError } = await supabase
-      .from("admin_users")
-      .select("user_id")
-      .eq("user_id", session.user.id)
-      .maybeSingle();
-
-    if (adminError || !admin) {
-      await supabase.auth.signOut();
-      router.replace("/admin/login");
-      return;
-    }
-
-    setEmail(session.user.email || "");
-    setChecking(false);
-
-    loadPrizes();
   }
 
+  // -----------------------------
+  // Load Prizes
+  // -----------------------------
   async function loadPrizes() {
     setLoadingPrizes(true);
-    setError("");
 
     const { data, error } = await supabase
       .from("prizes")
       .select(
-        "id,name,description,weight,active,sort_order,coupon_prefix"
+        "id, name, description, weight, active, sort_order, coupon_prefix"
       )
       .order("sort_order", { ascending: true });
 
     if (error) {
-      console.error(error);
-      setError("Unable to load prizes.");
-      setLoadingPrizes(false);
-      return;
+      console.error("Load prizes error:", error);
+    } else {
+      setPrizes((data || []) as Prize[]);
     }
 
-    setPrizes((data || []) as Prize[]);
     setLoadingPrizes(false);
   }
 
-  function openAddForm() {
-    setEditingPrize(null);
+  // -----------------------------
+  // Load Spin History
+  // -----------------------------
+  async function loadHistory(isRefresh = false) {
+    if (isRefresh) {
+      setRefreshingHistory(true);
+    } else {
+      setLoadingHistory(true);
+    }
 
-    setForm({
-      ...emptyForm,
-      sort_order: String(prizes.length + 1),
-    });
+    setHistoryError("");
 
-    setMessage("");
-    setError("");
-    setShowForm(true);
+    const { data, error } = await supabase
+      .from("spins")
+      .select(`
+        id,
+        mobile,
+        created_at,
+        prize_id,
+        coupon_id,
+        prizes (
+          name
+        ),
+        coupons (
+          code,
+          status
+        )
+      `)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.error("Load spin history error:", error);
+      setHistoryError("Unable to load spin history.");
+      setHistory([]);
+    } else {
+      setHistory((data || []) as SpinHistory[]);
+    }
+
+    if (isRefresh) {
+      setRefreshingHistory(false);
+    } else {
+      setLoadingHistory(false);
+    }
   }
 
-  function openEditForm(prize: Prize) {
-    setEditingPrize(prize);
+  // -----------------------------
+  // Add Prize
+  // -----------------------------
+  function openAddPrizeForm() {
+    setEditingPrizeId(null);
 
-    setForm({
+    setPrizeForm({
+      name: "",
+      description: "",
+      weight: "1",
+      coupon_prefix: "",
+      sort_order: String(prizes.length + 1),
+      active: true,
+    });
+
+    setShowPrizeForm(true);
+  }
+
+  // -----------------------------
+  // Edit Prize
+  // -----------------------------
+  function openEditPrizeForm(prize: Prize) {
+    setEditingPrizeId(prize.id);
+
+    setPrizeForm({
       name: prize.name,
       description: prize.description || "",
       weight: String(prize.weight),
@@ -129,114 +229,75 @@ export default function AdminDashboard() {
       active: prize.active,
     });
 
-    setMessage("");
-    setError("");
-    setShowForm(true);
+    setShowPrizeForm(true);
   }
 
-  function closeForm() {
-    if (saving) return;
-
-    setShowForm(false);
-    setEditingPrize(null);
-    setForm(emptyForm);
-  }
-
-  async function savePrize(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    setError("");
-    setMessage("");
-
-    const name = form.name.trim();
-    const description = form.description.trim();
-    const couponPrefix = form.coupon_prefix.trim().toUpperCase();
-
-    const weight = Number(form.weight);
-    const sortOrder = Number(form.sort_order);
-
-    if (!name) {
-      setError("Please enter a prize name.");
+  // -----------------------------
+  // Save Prize
+  // -----------------------------
+  async function savePrize() {
+    if (!prizeForm.name.trim()) {
+      alert("Please enter a prize name.");
       return;
     }
 
-    if (!Number.isFinite(weight) || weight < 0) {
-      setError("Weight must be 0 or greater.");
+    const weight = Number(prizeForm.weight);
+
+    if (Number.isNaN(weight) || weight < 0) {
+      alert("Please enter a valid weight.");
       return;
     }
 
-    if (!Number.isInteger(sortOrder) || sortOrder < 1) {
-      setError("Display order must be a whole number starting from 1.");
+    const sortOrder = Number(prizeForm.sort_order);
+
+    if (Number.isNaN(sortOrder)) {
+      alert("Please enter a valid sort order.");
       return;
     }
 
-    if (!couponPrefix) {
-      setError("Please enter a coupon prefix.");
-      return;
-    }
+    setSavingPrize(true);
 
-    if (couponPrefix.length > 10) {
-      setError("Coupon prefix must be 10 characters or less.");
-      return;
-    }
+    const payload = {
+      name: prizeForm.name.trim(),
+      description: prizeForm.description.trim() || null,
+      weight,
+      coupon_prefix: prizeForm.coupon_prefix.trim().toUpperCase() || null,
+      sort_order: sortOrder,
+      active: prizeForm.active,
+    };
 
-    setSaving(true);
-
-    if (editingPrize) {
+    if (editingPrizeId) {
       const { error } = await supabase
         .from("prizes")
-        .update({
-          name,
-          description: description || null,
-          weight,
-          active: form.active,
-          sort_order: sortOrder,
-          coupon_prefix: couponPrefix,
-        })
-        .eq("id", editingPrize.id);
+        .update(payload)
+        .eq("id", editingPrizeId);
 
       if (error) {
-        console.error(error);
-        setError(error.message || "Unable to update prize.");
-        setSaving(false);
-        return;
+        console.error("Update prize error:", error);
+        alert(`Unable to update prize: ${error.message}`);
+      } else {
+        setShowPrizeForm(false);
+        await loadPrizes();
       }
-
-      setMessage("Prize updated successfully.");
     } else {
-      const { error } = await supabase
-        .from("prizes")
-        .insert({
-          name,
-          description: description || null,
-          weight,
-          active: form.active,
-          sort_order: sortOrder,
-          coupon_prefix: couponPrefix,
-        });
+      const { error } = await supabase.from("prizes").insert(payload);
 
       if (error) {
-        console.error(error);
-        setError(error.message || "Unable to add prize.");
-        setSaving(false);
-        return;
+        console.error("Add prize error:", error);
+        alert(`Unable to add prize: ${error.message}`);
+      } else {
+        setShowPrizeForm(false);
+        await loadPrizes();
       }
-
-      setMessage("Prize added successfully.");
     }
 
-    setSaving(false);
-    setShowForm(false);
-    setEditingPrize(null);
-    setForm(emptyForm);
-
-    await loadPrizes();
+    setSavingPrize(false);
   }
 
+  // -----------------------------
+  // Toggle Prize Active Status
+  // -----------------------------
   async function togglePrize(prize: Prize) {
-    setError("");
-    setMessage("");
-
     const { error } = await supabase
       .from("prizes")
       .update({
@@ -245,28 +306,25 @@ export default function AdminDashboard() {
       .eq("id", prize.id);
 
     if (error) {
-      console.error(error);
-      setError(error.message || "Unable to change prize status.");
+      console.error("Toggle prize error:", error);
+      alert(`Unable to update prize: ${error.message}`);
       return;
     }
-
-    setMessage(
-      `${prize.name} is now ${!prize.active ? "active" : "inactive"}.`
-    );
 
     await loadPrizes();
   }
 
+  // -----------------------------
+  // Delete Prize
+  // -----------------------------
   async function deletePrize(prize: Prize) {
     const confirmed = window.confirm(
-      `Delete "${prize.name}"?\n\nThis action cannot be undone.`
+      `Are you sure you want to delete "${prize.name}"?`
     );
 
-    if (!confirmed) return;
-
-    setDeleting(prize.id);
-    setError("");
-    setMessage("");
+    if (!confirmed) {
+      return;
+    }
 
     const { error } = await supabase
       .from("prizes")
@@ -274,393 +332,557 @@ export default function AdminDashboard() {
       .eq("id", prize.id);
 
     if (error) {
-      console.error(error);
-      setError(error.message || "Unable to delete prize.");
-      setDeleting(null);
+      console.error("Delete prize error:", error);
+      alert(
+        `Unable to delete prize.\n\n${error.message}\n\nIf this prize has already been used in a spin, you may need to deactivate it instead.`
+      );
       return;
     }
-
-    setMessage(`${prize.name} has been deleted.`);
-    setDeleting(null);
 
     await loadPrizes();
   }
 
-  async function logout() {
+  // -----------------------------
+  // Logout
+  // -----------------------------
+  async function handleLogout() {
     await supabase.auth.signOut();
     router.replace("/admin/login");
   }
 
-  /*
-   * ============================================================
-   * STAGE 3A - ADMIN OVERVIEW CALCULATIONS
-   * ============================================================
-   */
+  // -----------------------------
+  // Helper: Mask Mobile
+  // -----------------------------
+  function maskMobile(mobile: string) {
+    if (!mobile) {
+      return "—";
+    }
 
-  const totalPrizes = prizes.length;
+    const value = mobile.replace(/\s+/g, "");
 
-  const activePrizes = prizes.filter(
-    (prize) => prize.active
-  ).length;
+    if (value.length <= 7) {
+      return value;
+    }
 
-  const inactivePrizes = prizes.filter(
-    (prize) => !prize.active
-  ).length;
+    return `${value.slice(0, 5)}••••${value.slice(-2)}`;
+  }
 
-  const totalWinningWeight = prizes.reduce(
-    (total, prize) => total + Number(prize.weight || 0),
-    0
-  );
+  // -----------------------------
+  // Helper: Date & Time
+  // -----------------------------
+  function formatDateTime(value: string) {
+    if (!value) {
+      return "—";
+    }
 
-  /*
-   * Only active prizes participate in the wheel.
-   * This calculation is useful for the administrator
-   * to understand the currently active configuration.
-   */
-  const activeWinningWeight = prizes
-    .filter((prize) => prize.active)
-    .reduce(
-      (total, prize) => total + Number(prize.weight || 0),
-      0
-    );
+    try {
+      return new Intl.DateTimeFormat("en-LK", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(value));
+    } catch {
+      return value;
+    }
+  }
 
-  if (checking) {
-    return (
-      <main className="loading">
-        <div>
-          <div className="loader-mark">S</div>
-          <p>Checking administrator access...</p>
-        </div>
+  // -----------------------------
+  // Helper: Related Prize
+  // -----------------------------
+  function getPrizeName(
+    prize:
+      | {
+          name: string;
+        }
+      | {
+          name: string;
+        }[]
+      | null
+  ) {
+    if (!prize) {
+      return "—";
+    }
 
-        <style jsx>{`
-          .loading {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            background: #f5f5f5;
-          }
+    if (Array.isArray(prize)) {
+      return prize[0]?.name || "—";
+    }
 
-          .loader-mark {
-            width: 50px;
-            height: 50px;
-            margin: auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 12px;
-            background: #e31b23;
-            color: white;
-            font-size: 28px;
-            font-weight: 900;
-          }
+    return prize.name || "—";
+  }
 
-          p {
-            color: #777;
-          }
-        `}</style>
-      </main>
-    );
+  // -----------------------------
+  // Helper: Related Coupon
+  // -----------------------------
+  function getCoupon(
+    coupon:
+      | {
+          code: string;
+          status: string;
+        }
+      | {
+          code: string;
+          status: string;
+        }[]
+      | null
+  ) {
+    if (!coupon) {
+      return null;
+    }
+
+    if (Array.isArray(coupon)) {
+      return coupon[0] || null;
+    }
+
+    return coupon;
+  }
+
+  // -----------------------------
+  // Coupon Status Style
+  // -----------------------------
+  function getCouponStatusClass(status: string) {
+    const normalized = status?.toLowerCase();
+
+    if (
+      normalized === "active" ||
+      normalized === "issued" ||
+      normalized === "available"
+    ) {
+      return "bg-green-100 text-green-700";
+    }
+
+    if (
+      normalized === "redeemed" ||
+      normalized === "used"
+    ) {
+      return "bg-blue-100 text-blue-700";
+    }
+
+    if (
+      normalized === "expired" ||
+      normalized === "cancelled" ||
+      normalized === "canceled"
+    ) {
+      return "bg-red-100 text-red-700";
+    }
+
+    return "bg-gray-100 text-gray-700";
   }
 
   return (
-    <main className="admin-page">
-      <header className="admin-header">
-        <div className="header-brand">
-          <div className="header-mark">S</div>
+    <div className="min-h-screen bg-gray-50">
+      {/* ========================================================= */}
+      {/* HEADER */}
+      {/* ========================================================= */}
 
+      <header className="border-b bg-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <div>
-            <div className="header-name">SINGHAGIRI</div>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-lg font-bold text-white">
+                S
+              </div>
 
-            <div className="header-subtitle">
-              SPIN & WIN ADMIN
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">
+                  Singhagiri
+                </h1>
+
+                <p className="text-xs text-gray-500">
+                  Spin &amp; Win Admin
+                </p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="header-right">
-          <span className="admin-email">{email}</span>
+          <div className="flex items-center gap-3">
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-medium text-gray-900">
+                {adminEmail}
+              </p>
 
-          <button onClick={logout}>Logout</button>
+              <p className="text-xs text-gray-500">
+                Administrator
+              </p>
+            </div>
+
+            <button
+              onClick={handleLogout}
+              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
-      <section className="dashboard">
-        <div className="welcome">
-          <div>
-            <div className="eyebrow">
-              ADMINISTRATION
-            </div>
+      {/* ========================================================= */}
+      {/* MAIN */}
+      {/* ========================================================= */}
 
-            <h1>Spin & Win Dashboard</h1>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {/* Page Heading */}
 
-            <p>
-              Manage your Singhagiri Spin & Win campaign.
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-gray-900">
+            Spin &amp; Win Dashboard
+          </h2>
+
+          <p className="mt-1 text-sm text-gray-500">
+            Manage prizes and monitor customer spin activity.
+          </p>
+        </div>
+
+        {/* ========================================================= */}
+        {/* QUICK STATS */}
+        {/* ========================================================= */}
+
+        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">
+              Total Prizes
+            </p>
+
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {prizes.length}
             </p>
           </div>
 
-          <button
-            className="add-button"
-            onClick={openAddForm}
-          >
-            + Add Prize
-          </button>
-        </div>
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">
+              Active Prizes
+            </p>
 
-        {message && (
-          <div className="success-message">
-            ✓ {message}
-          </div>
-        )}
-
-        {error && (
-          <div className="error-message">
-            ! {error}
-          </div>
-        )}
-
-        {/* =====================================================
-            STAGE 3A - ADMIN OVERVIEW
-        ====================================================== */}
-
-        <div className="overview-header">
-          <div>
-            <div className="eyebrow">
-              CAMPAIGN OVERVIEW
-            </div>
-
-            <h2>Prize Overview</h2>
-
-            <p>
-              Quick summary of your current Spin & Win configuration.
+            <p className="mt-2 text-3xl font-bold text-green-600">
+              {prizes.filter((prize) => prize.active).length}
             </p>
           </div>
-        </div>
 
-        <div className="overview-grid">
-          <div className="overview-card">
-            <div className="overview-icon">
-              🎁
-            </div>
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">
+              Recent Spins
+            </p>
 
-            <div className="overview-content">
-              <div className="overview-label">
-                TOTAL PRIZES
-              </div>
-
-              <div className="overview-value">
-                {totalPrizes}
-              </div>
-
-              <div className="overview-description">
-                All configured prizes
-              </div>
-            </div>
-          </div>
-
-          <div className="overview-card">
-            <div className="overview-icon active-icon">
-              ✓
-            </div>
-
-            <div className="overview-content">
-              <div className="overview-label">
-                ACTIVE PRIZES
-              </div>
-
-              <div className="overview-value">
-                {activePrizes}
-              </div>
-
-              <div className="overview-description">
-                Currently available on wheel
-              </div>
-            </div>
-          </div>
-
-          <div className="overview-card">
-            <div className="overview-icon inactive-icon">
-              ○
-            </div>
-
-            <div className="overview-content">
-              <div className="overview-label">
-                INACTIVE PRIZES
-              </div>
-
-              <div className="overview-value">
-                {inactivePrizes}
-              </div>
-
-              <div className="overview-description">
-                Currently disabled
-              </div>
-            </div>
-          </div>
-
-          <div className="overview-card">
-            <div className="overview-icon weight-icon">
-              %
-            </div>
-
-            <div className="overview-content">
-              <div className="overview-label">
-                ACTIVE WEIGHT
-              </div>
-
-              <div className="overview-value">
-                {activeWinningWeight}
-              </div>
-
-              <div className="overview-description">
-                Total active winning weight
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="weight-info">
-          <div className="weight-info-icon">
-            ℹ
-          </div>
-
-          <div>
-            <strong>Winning probability</strong>
-
-            <p>
-              Each active prize's probability is calculated from
-              its weight relative to the total active weight.
+            <p className="mt-2 text-3xl font-bold text-red-600">
+              {history.length}
             </p>
           </div>
         </div>
 
-        {/* =====================================================
-            PRIZE MANAGEMENT
-        ====================================================== */}
+        {/* ========================================================= */}
+        {/* PRIZE MANAGEMENT */}
+        {/* ========================================================= */}
 
-        <div className="section-header">
-          <div>
-            <h2>Prize Management</h2>
+        <section className="mb-10 rounded-xl border bg-white shadow-sm">
+          <div className="flex flex-col gap-4 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">
+                Prize Management
+              </h3>
 
-            <p>
-              Control prizes, winning weights and coupon settings.
-            </p>
-          </div>
-
-          <div className="prize-count">
-            {prizes.length} prize
-            {prizes.length !== 1 ? "s" : ""}
-          </div>
-        </div>
-
-        {loadingPrizes ? (
-          <div className="loading-box">
-            Loading prizes...
-          </div>
-        ) : prizes.length === 0 ? (
-          <div className="empty-box">
-            <div className="empty-icon">🎁</div>
-
-            <h3>No prizes found</h3>
-
-            <p>
-              Add your first Spin & Win prize to get started.
-            </p>
+              <p className="mt-1 text-sm text-gray-500">
+                Manage prizes, winning weights and coupon prefixes.
+              </p>
+            </div>
 
             <button
-              className="add-button"
-              onClick={openAddForm}
+              onClick={openAddPrizeForm}
+              className="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
             >
               + Add Prize
             </button>
           </div>
-        ) : (
-          <div className="table-card">
-            <div className="table-wrapper">
-              <table>
-                <thead>
+
+          {/* Prize Form */}
+
+          {showPrizeForm && (
+            <div className="border-b bg-gray-50 px-5 py-6">
+              <div className="mb-5 flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold text-gray-900">
+                    {editingPrizeId ? "Edit Prize" : "Add New Prize"}
+                  </h4>
+
+                  <p className="text-sm text-gray-500">
+                    Configure the prize details below.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setShowPrizeForm(false)}
+                  className="text-sm text-gray-500 hover:text-gray-900"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                {/* Name */}
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                    Prize Name
+                  </label>
+
+                  <input
+                    type="text"
+                    value={prizeForm.name}
+                    onChange={(e) =>
+                      setPrizeForm({
+                        ...prizeForm,
+                        name: e.target.value,
+                      })
+                    }
+                    placeholder="e.g. Rs. 1,000 Voucher"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                  />
+                </div>
+
+                {/* Description */}
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                    Description
+                  </label>
+
+                  <input
+                    type="text"
+                    value={prizeForm.description}
+                    onChange={(e) =>
+                      setPrizeForm({
+                        ...prizeForm,
+                        description: e.target.value,
+                      })
+                    }
+                    placeholder="Optional description"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                  />
+                </div>
+
+                {/* Weight */}
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                    Winning Weight
+                  </label>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={prizeForm.weight}
+                    onChange={(e) =>
+                      setPrizeForm({
+                        ...prizeForm,
+                        weight: e.target.value,
+                      })
+                    }
+                    placeholder="1"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                  />
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    Higher weight = higher chance of winning.
+                  </p>
+                </div>
+
+                {/* Coupon Prefix */}
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                    Coupon Prefix
+                  </label>
+
+                  <input
+                    type="text"
+                    maxLength={10}
+                    value={prizeForm.coupon_prefix}
+                    onChange={(e) =>
+                      setPrizeForm({
+                        ...prizeForm,
+                        coupon_prefix: e.target.value.toUpperCase(),
+                      })
+                    }
+                    placeholder="e.g. SG1000"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm uppercase outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                  />
+                </div>
+
+                {/* Sort Order */}
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                    Sort Order
+                  </label>
+
+                  <input
+                    type="number"
+                    value={prizeForm.sort_order}
+                    onChange={(e) =>
+                      setPrizeForm({
+                        ...prizeForm,
+                        sort_order: e.target.value,
+                      })
+                    }
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                  />
+                </div>
+
+                {/* Active */}
+
+                <div className="flex items-center">
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={prizeForm.active}
+                      onChange={(e) =>
+                        setPrizeForm({
+                          ...prizeForm,
+                          active: e.target.checked,
+                        })
+                      }
+                      className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                    />
+
+                    <span className="text-sm font-medium text-gray-700">
+                      Prize is active
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowPrizeForm(false)}
+                  className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={savePrize}
+                  disabled={savingPrize}
+                  className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingPrize
+                    ? "Saving..."
+                    : editingPrizeId
+                    ? "Update Prize"
+                    : "Add Prize"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Prize Table */}
+
+          <div className="overflow-x-auto">
+            {loadingPrizes ? (
+              <div className="px-5 py-12 text-center text-sm text-gray-500">
+                Loading prizes...
+              </div>
+            ) : prizes.length === 0 ? (
+              <div className="px-5 py-12 text-center">
+                <p className="font-medium text-gray-900">
+                  No prizes found
+                </p>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Add your first prize to start configuring the wheel.
+                </p>
+              </div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
                   <tr>
-                    <th>ORDER</th>
-                    <th>PRIZE</th>
-                    <th>WEIGHT</th>
-                    <th>COUPON</th>
-                    <th>STATUS</th>
-                    <th>ACTIONS</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Prize
+                    </th>
+
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Weight
+                    </th>
+
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Prefix
+                    </th>
+
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Order
+                    </th>
+
+                    <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Status
+                    </th>
+
+                    <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
 
-                <tbody>
+                <tbody className="divide-y divide-gray-200 bg-white">
                   {prizes.map((prize) => (
-                    <tr key={prize.id}>
-                      <td>
-                        <span className="order-number">
-                          {prize.sort_order}
-                        </span>
-                      </td>
+                    <tr key={prize.id} className="hover:bg-gray-50">
+                      <td className="px-5 py-4">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {prize.name}
+                          </p>
 
-                      <td>
-                        <div className="prize-name">
-                          {prize.name}
+                          {prize.description && (
+                            <p className="mt-0.5 text-xs text-gray-500">
+                              {prize.description}
+                            </p>
+                          )}
                         </div>
-
-                        {prize.description && (
-                          <div className="prize-description">
-                            {prize.description}
-                          </div>
-                        )}
                       </td>
 
-                      <td>
-                        <span className="weight">
-                          {prize.weight}
+                      <td className="px-5 py-4 text-sm text-gray-700">
+                        {prize.weight}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span className="rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
+                          {prize.coupon_prefix || "—"}
                         </span>
                       </td>
 
-                      <td>
-                        <span className="coupon-prefix">
-                          {prize.coupon_prefix || "-"}
-                        </span>
+                      <td className="px-5 py-4 text-sm text-gray-700">
+                        {prize.sort_order}
                       </td>
 
-                      <td>
-                        <button
-                          className={
+                      <td className="px-5 py-4">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                             prize.active
-                              ? "status active"
-                              : "status inactive"
-                          }
-                          onClick={() => togglePrize(prize)}
+                              ? "bg-green-100 text-green-700"
+                              : "bg-gray-100 text-gray-600"
+                          }`}
                         >
-                          {prize.active
-                            ? "ACTIVE"
-                            : "INACTIVE"}
-                        </button>
+                          {prize.active ? "Active" : "Inactive"}
+                        </span>
                       </td>
 
-                      <td>
-                        <div className="actions">
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-2">
                           <button
-                            className="edit-button"
-                            onClick={() =>
-                              openEditForm(prize)
-                            }
+                            onClick={() => togglePrize(prize)}
+                            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                          >
+                            {prize.active ? "Deactivate" : "Activate"}
+                          </button>
+
+                          <button
+                            onClick={() => openEditPrizeForm(prize)}
+                            className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
                           >
                             Edit
                           </button>
 
                           <button
-                            className="delete-button"
-                            disabled={
-                              deleting === prize.id
-                            }
-                            onClick={() =>
-                              deletePrize(prize)
-                            }
+                            onClick={() => deletePrize(prize)}
+                            className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
                           >
-                            {deleting === prize.id
-                              ? "..."
-                              : "Delete"}
+                            Delete
                           </button>
                         </div>
                       </td>
@@ -668,943 +890,217 @@ export default function AdminDashboard() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            )}
           </div>
-        )}
+        </section>
 
-        <button
-          className="back-button"
-          onClick={() => router.push("/")}
-        >
-          ← View Spin & Win
-        </button>
-      </section>
+        {/* ========================================================= */}
+        {/* STAGE 3B - SPIN / WINNER HISTORY */}
+        {/* ========================================================= */}
 
-      {showForm && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <div className="modal-header">
-              <div>
-                <div className="modal-eyebrow">
-                  {editingPrize
-                    ? "EDIT PRIZE"
-                    : "NEW PRIZE"}
-                </div>
+        <section className="rounded-xl border bg-white shadow-sm">
+          {/* History Header */}
 
-                <h2>
-                  {editingPrize
-                    ? "Edit Prize"
-                    : "Add Prize"}
-                </h2>
+          <div className="flex flex-col gap-4 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-bold text-gray-900">
+                  Spin / Winner History
+                </h3>
+
+                <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
+                  {history.length}
+                </span>
               </div>
 
-              <button
-                className="close-button"
-                onClick={closeForm}
-                disabled={saving}
+              <p className="mt-1 text-sm text-gray-500">
+                View recent customer spins, prizes and generated coupons.
+              </p>
+            </div>
+
+            <button
+              onClick={() => loadHistory(true)}
+              disabled={refreshingHistory}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span
+                className={
+                  refreshingHistory ? "animate-spin" : ""
+                }
               >
-                ×
-              </button>
-            </div>
+                ↻
+              </span>
 
-            <form onSubmit={savePrize}>
-              <div className="form-field">
-                <label>PRIZE NAME</label>
-
-                <input
-                  type="text"
-                  value={form.name}
-                  placeholder="e.g. 10% OFF"
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      name: e.target.value,
-                    })
-                  }
-                  disabled={saving}
-                />
-              </div>
-
-              <div className="form-field">
-                <label>DESCRIPTION</label>
-
-                <textarea
-                  value={form.description}
-                  placeholder="Optional prize description"
-                  rows={3}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      description: e.target.value,
-                    })
-                  }
-                  disabled={saving}
-                />
-              </div>
-
-              <div className="form-grid">
-                <div className="form-field">
-                  <label>WINNING WEIGHT</label>
-
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={form.weight}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        weight: e.target.value,
-                      })
-                    }
-                    disabled={saving}
-                  />
-
-                  <small>
-                    Higher weight = higher chance.
-                  </small>
-                </div>
-
-                <div className="form-field">
-                  <label>DISPLAY ORDER</label>
-
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={form.sort_order}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        sort_order: e.target.value,
-                      })
-                    }
-                    disabled={saving}
-                  />
-
-                  <small>
-                    Controls wheel order.
-                  </small>
-                </div>
-              </div>
-
-              <div className="form-field">
-                <label>COUPON PREFIX</label>
-
-                <input
-                  type="text"
-                  maxLength={10}
-                  value={form.coupon_prefix}
-                  placeholder="e.g. SG10"
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      coupon_prefix:
-                        e.target.value.toUpperCase(),
-                    })
-                  }
-                  disabled={saving}
-                />
-
-                <small>
-                  Example: SG10-XXXXXXXX
-                </small>
-              </div>
-
-              <div className="active-toggle">
-                <div>
-                  <strong>Prize Status</strong>
-
-                  <p>
-                    {form.active
-                      ? "This prize can be won."
-                      : "This prize is hidden from the wheel."}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  className={
-                    form.active
-                      ? "toggle on"
-                      : "toggle"
-                  }
-                  onClick={() =>
-                    setForm({
-                      ...form,
-                      active: !form.active,
-                    })
-                  }
-                  disabled={saving}
-                >
-                  <span />
-                </button>
-              </div>
-
-              {error && (
-                <div className="form-error">
-                  {error}
-                </div>
-              )}
-
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="cancel-button"
-                  onClick={closeForm}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  className="save-button"
-                  disabled={saving}
-                >
-                  {saving
-                    ? "SAVING..."
-                    : editingPrize
-                    ? "SAVE CHANGES"
-                    : "ADD PRIZE"}
-                </button>
-              </div>
-            </form>
+              {refreshingHistory ? "Refreshing..." : "Refresh"}
+            </button>
           </div>
+
+          {/* Error */}
+
+          {historyError && (
+            <div className="border-b bg-red-50 px-5 py-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm font-medium text-red-700">
+                  {historyError}
+                </p>
+
+                <button
+                  onClick={() => loadHistory(true)}
+                  className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                >
+                  Try Again
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* History Table */}
+
+          <div className="overflow-x-auto">
+            {loadingHistory ? (
+              <div className="px-5 py-14 text-center">
+                <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-red-600" />
+
+                <p className="text-sm text-gray-500">
+                  Loading spin history...
+                </p>
+              </div>
+            ) : history.length === 0 ? (
+              <div className="px-5 py-14 text-center">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 text-2xl">
+                  🎡
+                </div>
+
+                <p className="mt-4 font-semibold text-gray-900">
+                  No spins yet
+                </p>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Customer spin activity will appear here once users start
+                  playing.
+                </p>
+              </div>
+            ) : (
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Date &amp; Time
+                    </th>
+
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Mobile
+                    </th>
+
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Prize
+                    </th>
+
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Coupon
+                    </th>
+
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-200 bg-white">
+                  {history.map((spin) => {
+                    const coupon = getCoupon(spin.coupons);
+
+                    return (
+                      <tr
+                        key={spin.id}
+                        className="transition hover:bg-gray-50"
+                      >
+                        {/* Date */}
+
+                        <td className="whitespace-nowrap px-5 py-4">
+                          <p className="text-sm font-medium text-gray-900">
+                            {formatDateTime(spin.created_at)}
+                          </p>
+                        </td>
+
+                        {/* Mobile */}
+
+                        <td className="whitespace-nowrap px-5 py-4">
+                          <span className="font-mono text-sm text-gray-700">
+                            {maskMobile(spin.mobile)}
+                          </span>
+                        </td>
+
+                        {/* Prize */}
+
+                        <td className="px-5 py-4">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {getPrizeName(spin.prizes)}
+                          </p>
+                        </td>
+
+                        {/* Coupon */}
+
+                        <td className="whitespace-nowrap px-5 py-4">
+                          {coupon?.code ? (
+                            <span className="rounded-md bg-gray-100 px-2.5 py-1.5 font-mono text-xs font-semibold text-gray-800">
+                              {coupon.code}
+                            </span>
+                          ) : (
+                            <span className="text-sm text-gray-400">
+                              —
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Status */}
+
+                        <td className="whitespace-nowrap px-5 py-4">
+                          {coupon?.status ? (
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${getCouponStatusClass(
+                                coupon.status
+                              )}`}
+                            >
+                              {coupon.status}
+                            </span>
+                          ) : (
+                            <span className="text-sm text-gray-400">
+                              —
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* History Footer */}
+
+          {!loadingHistory && history.length > 0 && (
+            <div className="border-t bg-gray-50 px-5 py-4">
+              <p className="text-xs text-gray-500">
+                Showing the latest {history.length} spin
+                {history.length === 1 ? "" : "s"}. Search and filtering
+                will be added in Stage 3C.
+              </p>
+            </div>
+          )}
+        </section>
+      </main>
+
+      {/* ========================================================= */}
+      {/* FOOTER */}
+      {/* ========================================================= */}
+
+      <footer className="border-t bg-white">
+        <div className="mx-auto max-w-7xl px-4 py-5 text-center text-xs text-gray-400 sm:px-6 lg:px-8">
+          Singhagiri Spin &amp; Win Admin Panel
         </div>
-      )}
-
-      <style jsx>{`
-        .admin-page {
-          min-height: 100vh;
-          background: #f5f5f5;
-        }
-
-        .admin-header {
-          min-height: 70px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 12px 28px;
-          box-sizing: border-box;
-          background: white;
-          border-bottom: 1px solid #e7e7e7;
-        }
-
-        .header-brand {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .header-mark {
-          width: 40px;
-          height: 40px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 9px;
-          background: #e31b23;
-          color: white;
-          font-size: 23px;
-          font-weight: 900;
-        }
-
-        .header-name {
-          font-size: 18px;
-          font-weight: 950;
-          letter-spacing: 1px;
-        }
-
-        .header-subtitle {
-          margin-top: 1px;
-          color: #e31b23;
-          font-size: 8px;
-          font-weight: 900;
-          letter-spacing: 2px;
-        }
-
-        .header-right {
-          display: flex;
-          align-items: center;
-          gap: 15px;
-        }
-
-        .admin-email {
-          color: #777;
-          font-size: 12px;
-        }
-
-        .header-right button {
-          padding: 9px 15px;
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          background: white;
-          color: #333;
-          font-size: 12px;
-          font-weight: 800;
-          cursor: pointer;
-        }
-
-        .dashboard {
-          width: 100%;
-          max-width: 1200px;
-          margin: auto;
-          padding: 42px 25px 60px;
-          box-sizing: border-box;
-        }
-
-        .welcome {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 20px;
-        }
-
-        .eyebrow,
-        .modal-eyebrow {
-          color: #e31b23;
-          font-size: 10px;
-          font-weight: 900;
-          letter-spacing: 1.5px;
-        }
-
-        .welcome h1 {
-          margin: 7px 0 5px;
-          font-size: 34px;
-          font-weight: 950;
-        }
-
-        .welcome p {
-          margin: 0;
-          color: #777;
-          font-size: 15px;
-        }
-
-        .add-button {
-          border: none;
-          border-radius: 10px;
-          padding: 12px 18px;
-          background: #e31b23;
-          color: white;
-          font-size: 13px;
-          font-weight: 900;
-          cursor: pointer;
-          box-shadow: 0 6px 16px rgba(227, 27, 35, 0.2);
-          white-space: nowrap;
-        }
-
-        .add-button:hover {
-          transform: translateY(-1px);
-        }
-
-        .success-message,
-        .error-message {
-          margin-top: 22px;
-          padding: 12px 15px;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 700;
-        }
-
-        .success-message {
-          background: #edf9f0;
-          color: #24733b;
-          border: 1px solid #ccebd3;
-        }
-
-        .error-message {
-          background: #fff1f1;
-          color: #c5161d;
-          border: 1px solid #f4cccc;
-        }
-
-        /* =====================================================
-           STAGE 3A - OVERVIEW
-        ====================================================== */
-
-        .overview-header {
-          margin-top: 35px;
-          margin-bottom: 16px;
-        }
-
-        .overview-header h2 {
-          margin: 6px 0 4px;
-          font-size: 21px;
-        }
-
-        .overview-header p {
-          margin: 0;
-          color: #888;
-          font-size: 13px;
-        }
-
-        .overview-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 15px;
-        }
-
-        .overview-card {
-          min-height: 125px;
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          padding: 20px;
-          box-sizing: border-box;
-          border-radius: 15px;
-          background: white;
-          border: 1px solid #eeeeee;
-          box-shadow: 0 6px 25px rgba(0, 0, 0, 0.04);
-        }
-
-        .overview-icon {
-          width: 48px;
-          height: 48px;
-          flex-shrink: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 12px;
-          background: #fff1f1;
-          color: #e31b23;
-          font-size: 22px;
-          font-weight: 900;
-        }
-
-        .active-icon {
-          background: #edf9f0;
-          color: #24733b;
-        }
-
-        .inactive-icon {
-          background: #f1f1f1;
-          color: #888;
-        }
-
-        .weight-icon {
-          background: #f5f5f5;
-          color: #333;
-        }
-
-        .overview-label {
-          color: #999;
-          font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 1px;
-        }
-
-        .overview-value {
-          margin-top: 4px;
-          color: #222;
-          font-size: 28px;
-          line-height: 1;
-          font-weight: 950;
-        }
-
-        .overview-description {
-          margin-top: 7px;
-          color: #999;
-          font-size: 10px;
-        }
-
-        .weight-info {
-          display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          margin-top: 15px;
-          padding: 12px 15px;
-          border: 1px solid #e8e8e8;
-          border-radius: 10px;
-          background: white;
-        }
-
-        .weight-info-icon {
-          width: 20px;
-          height: 20px;
-          flex-shrink: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%;
-          background: #f0f0f0;
-          color: #777;
-          font-size: 11px;
-          font-weight: 900;
-        }
-
-        .weight-info strong {
-          color: #555;
-          font-size: 11px;
-        }
-
-        .weight-info p {
-          margin: 3px 0 0;
-          color: #999;
-          font-size: 10px;
-        }
-
-        /* =====================================================
-           PRIZE MANAGEMENT
-        ====================================================== */
-
-        .section-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin: 35px 0 15px;
-        }
-
-        .section-header h2 {
-          margin: 0 0 4px;
-          font-size: 21px;
-        }
-
-        .section-header p {
-          margin: 0;
-          color: #888;
-          font-size: 13px;
-        }
-
-        .prize-count {
-          padding: 7px 11px;
-          border-radius: 20px;
-          background: white;
-          color: #777;
-          font-size: 11px;
-          font-weight: 800;
-          border: 1px solid #e5e5e5;
-        }
-
-        .table-card {
-          overflow: hidden;
-          border-radius: 16px;
-          background: white;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
-        }
-
-        .table-wrapper {
-          overflow-x: auto;
-        }
-
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          min-width: 850px;
-        }
-
-        th {
-          padding: 15px 18px;
-          background: #fafafa;
-          border-bottom: 1px solid #eee;
-          color: #888;
-          font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 1px;
-          text-align: left;
-        }
-
-        td {
-          padding: 17px 18px;
-          border-bottom: 1px solid #f0f0f0;
-          vertical-align: middle;
-        }
-
-        tr:last-child td {
-          border-bottom: none;
-        }
-
-        .order-number {
-          display: inline-flex;
-          width: 30px;
-          height: 30px;
-          align-items: center;
-          justify-content: center;
-          border-radius: 8px;
-          background: #f5f5f5;
-          color: #555;
-          font-size: 12px;
-          font-weight: 900;
-        }
-
-        .prize-name {
-          color: #222;
-          font-size: 14px;
-          font-weight: 850;
-        }
-
-        .prize-description {
-          margin-top: 4px;
-          color: #999;
-          font-size: 11px;
-        }
-
-        .weight {
-          display: inline-flex;
-          min-width: 42px;
-          justify-content: center;
-          padding: 7px 9px;
-          border-radius: 7px;
-          background: #f7f7f7;
-          color: #333;
-          font-size: 12px;
-          font-weight: 900;
-        }
-
-        .coupon-prefix {
-          display: inline-block;
-          padding: 6px 9px;
-          border-radius: 7px;
-          background: #fff5f5;
-          color: #c5161d;
-          font-family: monospace;
-          font-size: 11px;
-          font-weight: 900;
-        }
-
-        .status {
-          padding: 7px 10px;
-          border: none;
-          border-radius: 20px;
-          font-size: 9px;
-          font-weight: 900;
-          cursor: pointer;
-        }
-
-        .status.active {
-          background: #edf9f0;
-          color: #24733b;
-        }
-
-        .status.inactive {
-          background: #f1f1f1;
-          color: #888;
-        }
-
-        .actions {
-          display: flex;
-          gap: 7px;
-        }
-
-        .edit-button,
-        .delete-button {
-          padding: 7px 10px;
-          border-radius: 7px;
-          font-size: 10px;
-          font-weight: 800;
-          cursor: pointer;
-        }
-
-        .edit-button {
-          border: 1px solid #ddd;
-          background: white;
-          color: #444;
-        }
-
-        .delete-button {
-          border: 1px solid #f0cccc;
-          background: #fff7f7;
-          color: #c5161d;
-        }
-
-        .delete-button:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .loading-box,
-        .empty-box {
-          padding: 60px 20px;
-          border-radius: 16px;
-          background: white;
-          text-align: center;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
-        }
-
-        .loading-box {
-          color: #888;
-          font-size: 14px;
-        }
-
-        .empty-icon {
-          font-size: 40px;
-        }
-
-        .empty-box h3 {
-          margin: 15px 0 6px;
-        }
-
-        .empty-box p {
-          margin: 0 0 20px;
-          color: #888;
-          font-size: 13px;
-        }
-
-        .back-button {
-          display: block;
-          margin: 25px auto;
-          padding: 12px 20px;
-          border: 1px solid #ddd;
-          border-radius: 10px;
-          background: white;
-          color: #444;
-          font-weight: 700;
-          cursor: pointer;
-        }
-
-        /* =====================================================
-           MODAL
-        ====================================================== */
-
-        .modal-overlay {
-          position: fixed;
-          inset: 0;
-          z-index: 1000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-          box-sizing: border-box;
-          background: rgba(0, 0, 0, 0.48);
-        }
-
-        .modal {
-          width: 100%;
-          max-width: 560px;
-          max-height: 92vh;
-          overflow-y: auto;
-          padding: 28px;
-          box-sizing: border-box;
-          border-radius: 20px;
-          background: white;
-          box-shadow: 0 25px 80px rgba(0, 0, 0, 0.25);
-        }
-
-        .modal-header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          margin-bottom: 25px;
-        }
-
-        .modal-header h2 {
-          margin: 5px 0 0;
-          font-size: 25px;
-        }
-
-        .close-button {
-          width: 34px;
-          height: 34px;
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          background: white;
-          color: #666;
-          font-size: 22px;
-          cursor: pointer;
-        }
-
-        .form-field {
-          margin-bottom: 17px;
-        }
-
-        .form-field label {
-          display: block;
-          margin-bottom: 7px;
-          color: #333;
-          font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 0.8px;
-        }
-
-        .form-field input,
-        .form-field textarea {
-          width: 100%;
-          box-sizing: border-box;
-          padding: 12px;
-          border: 1px solid #ddd;
-          border-radius: 9px;
-          background: white;
-          color: #222;
-          font-family: inherit;
-          font-size: 14px;
-          outline: none;
-        }
-
-        .form-field textarea {
-          resize: vertical;
-        }
-
-        .form-field input:focus,
-        .form-field textarea:focus {
-          border-color: #e31b23;
-          box-shadow: 0 0 0 3px rgba(227, 27, 35, 0.07);
-        }
-
-        .form-field small {
-          display: block;
-          margin-top: 5px;
-          color: #999;
-          font-size: 10px;
-        }
-
-        .form-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 15px;
-        }
-
-        .active-toggle {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 20px;
-          margin: 8px 0 20px;
-          padding: 14px;
-          border-radius: 10px;
-          background: #f8f8f8;
-        }
-
-        .active-toggle strong {
-          font-size: 13px;
-        }
-
-        .active-toggle p {
-          margin: 3px 0 0;
-          color: #888;
-          font-size: 11px;
-        }
-
-        .toggle {
-          width: 48px;
-          height: 27px;
-          padding: 3px;
-          border: none;
-          border-radius: 20px;
-          background: #ccc;
-          cursor: pointer;
-          transition: 0.2s;
-        }
-
-        .toggle span {
-          display: block;
-          width: 21px;
-          height: 21px;
-          border-radius: 50%;
-          background: white;
-          transition: 0.2s;
-        }
-
-        .toggle.on {
-          background: #e31b23;
-        }
-
-        .toggle.on span {
-          transform: translateX(21px);
-        }
-
-        .form-error {
-          margin-bottom: 15px;
-          padding: 10px;
-          border-radius: 8px;
-          background: #fff1f1;
-          color: #c5161d;
-          font-size: 12px;
-        }
-
-        .modal-actions {
-          display: flex;
-          justify-content: flex-end;
-          gap: 10px;
-          padding-top: 5px;
-        }
-
-        .cancel-button,
-        .save-button {
-          padding: 12px 17px;
-          border-radius: 9px;
-          font-size: 12px;
-          font-weight: 900;
-          cursor: pointer;
-        }
-
-        .cancel-button {
-          border: 1px solid #ddd;
-          background: white;
-          color: #555;
-        }
-
-        .save-button {
-          border: none;
-          background: #e31b23;
-          color: white;
-        }
-
-        .cancel-button:disabled,
-        .save-button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        /* =====================================================
-           MOBILE
-        ====================================================== */
-
-        @media (max-width: 950px) {
-          .overview-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-        }
-
-        @media (max-width: 650px) {
-          .admin-header {
-            padding: 12px 15px;
-          }
-
-          .admin-email {
-            display: none;
-          }
-
-          .dashboard {
-            padding: 30px 15px 50px;
-          }
-
-          .welcome {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-
-          .welcome h1 {
-            font-size: 28px;
-          }
-
-          .add-button {
-            width: 100%;
-          }
-
-          .overview-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .overview-card {
-            min-height: 105px;
-          }
-
-          .section-header {
-            align-items: flex-start;
-            gap: 10px;
-          }
-
-          .form-grid {
-            grid-template-columns: 1fr;
-            gap: 0;
-          }
-
-          .modal {
-            padding: 22px 18px;
-            border-radius: 17px;
-          }
-        }
-      `}</style>
-    </main>
+      </footer>
+    </div>
   );
 }
