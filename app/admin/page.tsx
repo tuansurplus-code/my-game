@@ -23,30 +23,29 @@ type PrizeForm = {
   active: boolean;
 };
 
+type Spin = {
+  id: string;
+  mobile: string;
+  prize_id: string | null;
+  coupon_id: string | null;
+  created_at: string;
+};
+
+type Coupon = {
+  id: string;
+  code: string;
+  status: string;
+};
+
 type SpinHistory = {
   id: string;
   mobile: string;
-  created_at: string;
   prize_id: string | null;
   coupon_id: string | null;
-  prizes:
-    | {
-        name: string;
-      }
-    | {
-        name: string;
-      }[]
-    | null;
-  coupons:
-    | {
-        code: string;
-        status: string;
-      }
-    | {
-        code: string;
-        status: string;
-      }[]
-    | null;
+  created_at: string;
+  prize_name: string;
+  coupon_code: string;
+  coupon_status: string;
 };
 
 export default function AdminPage() {
@@ -54,37 +53,39 @@ export default function AdminPage() {
 
   const [adminEmail, setAdminEmail] = useState("");
 
-  // -----------------------------
-  // Prize Management
-  // -----------------------------
+  // ============================================================
+  // PRIZES
+  // ============================================================
+
   const [prizes, setPrizes] = useState<Prize[]>([]);
   const [loadingPrizes, setLoadingPrizes] = useState(true);
 
   const [showPrizeForm, setShowPrizeForm] = useState(false);
   const [editingPrizeId, setEditingPrizeId] = useState<string | null>(null);
+  const [savingPrize, setSavingPrize] = useState(false);
 
   const [prizeForm, setPrizeForm] = useState<PrizeForm>({
     name: "",
     description: "",
     weight: "1",
     coupon_prefix: "",
-    sort_order: "0",
+    sort_order: "1",
     active: true,
   });
 
-  const [savingPrize, setSavingPrize] = useState(false);
+  // ============================================================
+  // SPIN HISTORY - STAGE 3B
+  // ============================================================
 
-  // -----------------------------
-  // Spin History
-  // -----------------------------
   const [history, setHistory] = useState<SpinHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [refreshingHistory, setRefreshingHistory] = useState(false);
   const [historyError, setHistoryError] = useState("");
 
-  // -----------------------------
-  // Page initialization
-  // -----------------------------
+  // ============================================================
+  // INITIAL LOAD
+  // ============================================================
+
   useEffect(() => {
     checkAdmin();
   }, []);
@@ -100,7 +101,6 @@ export default function AdminPage() {
         return;
       }
 
-      // Check whether the logged-in user is an admin
       const { data: adminUser, error } = await supabase
         .from("admin_users")
         .select("user_id, email")
@@ -121,16 +121,20 @@ export default function AdminPage() {
 
       setAdminEmail(adminUser.email || user.email || "");
 
-      await Promise.all([loadPrizes(), loadHistory()]);
+      await Promise.all([
+        loadPrizes(),
+        loadHistory(),
+      ]);
     } catch (error) {
       console.error("Admin initialization error:", error);
       router.replace("/admin/login");
     }
   }
 
-  // -----------------------------
-  // Load Prizes
-  // -----------------------------
+  // ============================================================
+  // LOAD PRIZES
+  // ============================================================
+
   async function loadPrizes() {
     setLoadingPrizes(true);
 
@@ -143,6 +147,7 @@ export default function AdminPage() {
 
     if (error) {
       console.error("Load prizes error:", error);
+      setPrizes([]);
     } else {
       setPrizes((data || []) as Prize[]);
     }
@@ -150,9 +155,10 @@ export default function AdminPage() {
     setLoadingPrizes(false);
   }
 
-  // -----------------------------
-  // Load Spin History
-  // -----------------------------
+  // ============================================================
+  // LOAD SPIN HISTORY
+  // ============================================================
+
   async function loadHistory(isRefresh = false) {
     if (isRefresh) {
       setRefreshingHistory(true);
@@ -162,43 +168,155 @@ export default function AdminPage() {
 
     setHistoryError("");
 
-    const { data, error } = await supabase
-      .from("spins")
-      .select(`
-        id,
-        mobile,
-        created_at,
-        prize_id,
-        coupon_id,
-        prizes (
-          name
-        ),
-        coupons (
-          code,
-          status
+    try {
+      // ----------------------------------------------------------
+      // 1. Load spins
+      // ----------------------------------------------------------
+
+      const {
+        data: spinsData,
+        error: spinsError,
+      } = await supabase
+        .from("spins")
+        .select(
+          "id, mobile, prize_id, coupon_id, created_at"
         )
-      `)
-      .order("created_at", { ascending: false })
-      .limit(100);
+        .order("created_at", { ascending: false })
+        .limit(100);
 
-    if (error) {
-      console.error("Load spin history error:", error);
-      setHistoryError("Unable to load spin history.");
+      if (spinsError) {
+        throw new Error(
+          `Unable to load spins: ${spinsError.message}`
+        );
+      }
+
+      const spins = (spinsData || []) as Spin[];
+
+      // If there are no spins, stop here.
+      if (spins.length === 0) {
+        setHistory([]);
+        return;
+      }
+
+      // ----------------------------------------------------------
+      // 2. Get unique prize IDs
+      // ----------------------------------------------------------
+
+      const prizeIds = Array.from(
+        new Set(
+          spins
+            .map((spin) => spin.prize_id)
+            .filter((id): id is string => Boolean(id))
+        )
+      );
+
+      // ----------------------------------------------------------
+      // 3. Get unique coupon IDs
+      // ----------------------------------------------------------
+
+      const couponIds = Array.from(
+        new Set(
+          spins
+            .map((spin) => spin.coupon_id)
+            .filter((id): id is string => Boolean(id))
+        )
+      );
+
+      // ----------------------------------------------------------
+      // 4. Load prizes and coupons separately
+      // ----------------------------------------------------------
+
+      let prizesMap: Record<string, Prize> = {};
+      let couponsMap: Record<string, Coupon> = {};
+
+      if (prizeIds.length > 0) {
+        const {
+          data: prizeData,
+          error: prizeError,
+        } = await supabase
+          .from("prizes")
+          .select(
+            "id, name, description, weight, active, sort_order, coupon_prefix"
+          )
+          .in("id", prizeIds);
+
+        if (prizeError) {
+          throw new Error(
+            `Unable to load prizes: ${prizeError.message}`
+          );
+        }
+
+        (prizeData || []).forEach((prize) => {
+          prizesMap[prize.id] = prize as Prize;
+        });
+      }
+
+      if (couponIds.length > 0) {
+        const {
+          data: couponData,
+          error: couponError,
+        } = await supabase
+          .from("coupons")
+          .select("id, code, status")
+          .in("id", couponIds);
+
+        if (couponError) {
+          throw new Error(
+            `Unable to load coupons: ${couponError.message}`
+          );
+        }
+
+        (couponData || []).forEach((coupon) => {
+          couponsMap[coupon.id] = coupon as Coupon;
+        });
+      }
+
+      // ----------------------------------------------------------
+      // 5. Combine the data
+      // ----------------------------------------------------------
+
+      const combinedHistory: SpinHistory[] = spins.map((spin) => {
+        const prize = spin.prize_id
+          ? prizesMap[spin.prize_id]
+          : undefined;
+
+        const coupon = spin.coupon_id
+          ? couponsMap[spin.coupon_id]
+          : undefined;
+
+        return {
+          id: spin.id,
+          mobile: spin.mobile,
+          prize_id: spin.prize_id,
+          coupon_id: spin.coupon_id,
+          created_at: spin.created_at,
+          prize_name: prize?.name || "Prize unavailable",
+          coupon_code: coupon?.code || "—",
+          coupon_status: coupon?.status || "—",
+        };
+      });
+
+      setHistory(combinedHistory);
+    } catch (error) {
+      console.error("Spin history error:", error);
+
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load spin history."
+      );
+
       setHistory([]);
-    } else {
-      setHistory((data || []) as SpinHistory[]);
-    }
-
-    if (isRefresh) {
-      setRefreshingHistory(false);
-    } else {
+    } finally {
       setLoadingHistory(false);
+      setRefreshingHistory(false);
     }
   }
 
-  // -----------------------------
-  // Add Prize
-  // -----------------------------
+  // ============================================================
+  // ADD PRIZE
+  // ============================================================
+
   function openAddPrizeForm() {
     setEditingPrizeId(null);
 
@@ -214,9 +332,10 @@ export default function AdminPage() {
     setShowPrizeForm(true);
   }
 
-  // -----------------------------
-  // Edit Prize
-  // -----------------------------
+  // ============================================================
+  // EDIT PRIZE
+  // ============================================================
+
   function openEditPrizeForm(prize: Prize) {
     setEditingPrizeId(prize.id);
 
@@ -232,9 +351,10 @@ export default function AdminPage() {
     setShowPrizeForm(true);
   }
 
-  // -----------------------------
-  // Save Prize
-  // -----------------------------
+  // ============================================================
+  // SAVE PRIZE
+  // ============================================================
+
   async function savePrize() {
     if (!prizeForm.name.trim()) {
       alert("Please enter a prize name.");
@@ -261,42 +381,53 @@ export default function AdminPage() {
       name: prizeForm.name.trim(),
       description: prizeForm.description.trim() || null,
       weight,
-      coupon_prefix: prizeForm.coupon_prefix.trim().toUpperCase() || null,
+      coupon_prefix:
+        prizeForm.coupon_prefix.trim().toUpperCase() || null,
       sort_order: sortOrder,
       active: prizeForm.active,
     };
 
-    if (editingPrizeId) {
-      const { error } = await supabase
-        .from("prizes")
-        .update(payload)
-        .eq("id", editingPrizeId);
+    try {
+      if (editingPrizeId) {
+        const { error } = await supabase
+          .from("prizes")
+          .update(payload)
+          .eq("id", editingPrizeId);
 
-      if (error) {
-        console.error("Update prize error:", error);
-        alert(`Unable to update prize: ${error.message}`);
+        if (error) {
+          throw error;
+        }
       } else {
-        setShowPrizeForm(false);
-        await loadPrizes();
-      }
-    } else {
-      const { error } = await supabase.from("prizes").insert(payload);
+        const { error } = await supabase
+          .from("prizes")
+          .insert(payload);
 
-      if (error) {
-        console.error("Add prize error:", error);
-        alert(`Unable to add prize: ${error.message}`);
-      } else {
-        setShowPrizeForm(false);
-        await loadPrizes();
+        if (error) {
+          throw error;
+        }
       }
+
+      setShowPrizeForm(false);
+      setEditingPrizeId(null);
+
+      await loadPrizes();
+    } catch (error) {
+      console.error("Save prize error:", error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to save prize."
+      );
+    } finally {
+      setSavingPrize(false);
     }
-
-    setSavingPrize(false);
   }
 
-  // -----------------------------
-  // Toggle Prize Active Status
-  // -----------------------------
+  // ============================================================
+  // TOGGLE PRIZE
+  // ============================================================
+
   async function togglePrize(prize: Prize) {
     const { error } = await supabase
       .from("prizes")
@@ -307,6 +438,7 @@ export default function AdminPage() {
 
     if (error) {
       console.error("Toggle prize error:", error);
+
       alert(`Unable to update prize: ${error.message}`);
       return;
     }
@@ -314,9 +446,10 @@ export default function AdminPage() {
     await loadPrizes();
   }
 
-  // -----------------------------
-  // Delete Prize
-  // -----------------------------
+  // ============================================================
+  // DELETE PRIZE
+  // ============================================================
+
   async function deletePrize(prize: Prize) {
     const confirmed = window.confirm(
       `Are you sure you want to delete "${prize.name}"?`
@@ -333,26 +466,30 @@ export default function AdminPage() {
 
     if (error) {
       console.error("Delete prize error:", error);
+
       alert(
-        `Unable to delete prize.\n\n${error.message}\n\nIf this prize has already been used in a spin, you may need to deactivate it instead.`
+        `Unable to delete prize.\n\n${error.message}\n\nIf this prize has already been used in a spin, deactivate it instead.`
       );
+
       return;
     }
 
     await loadPrizes();
   }
 
-  // -----------------------------
-  // Logout
-  // -----------------------------
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace("/admin/login");
   }
 
-  // -----------------------------
-  // Helper: Mask Mobile
-  // -----------------------------
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
   function maskMobile(mobile: string) {
     if (!mobile) {
       return "—";
@@ -367,9 +504,6 @@ export default function AdminPage() {
     return `${value.slice(0, 5)}••••${value.slice(-2)}`;
   }
 
-  // -----------------------------
-  // Helper: Date & Time
-  // -----------------------------
   function formatDateTime(value: string) {
     if (!value) {
       return "—";
@@ -385,59 +519,6 @@ export default function AdminPage() {
     }
   }
 
-  // -----------------------------
-  // Helper: Related Prize
-  // -----------------------------
-  function getPrizeName(
-    prize:
-      | {
-          name: string;
-        }
-      | {
-          name: string;
-        }[]
-      | null
-  ) {
-    if (!prize) {
-      return "—";
-    }
-
-    if (Array.isArray(prize)) {
-      return prize[0]?.name || "—";
-    }
-
-    return prize.name || "—";
-  }
-
-  // -----------------------------
-  // Helper: Related Coupon
-  // -----------------------------
-  function getCoupon(
-    coupon:
-      | {
-          code: string;
-          status: string;
-        }
-      | {
-          code: string;
-          status: string;
-        }[]
-      | null
-  ) {
-    if (!coupon) {
-      return null;
-    }
-
-    if (Array.isArray(coupon)) {
-      return coupon[0] || null;
-    }
-
-    return coupon;
-  }
-
-  // -----------------------------
-  // Coupon Status Style
-  // -----------------------------
   function getCouponStatusClass(status: string) {
     const normalized = status?.toLowerCase();
 
@@ -467,29 +548,31 @@ export default function AdminPage() {
     return "bg-gray-100 text-gray-700";
   }
 
+  // ============================================================
+  // UI
+  // ============================================================
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* ========================================================= */}
+      {/* ======================================================== */}
       {/* HEADER */}
-      {/* ========================================================= */}
+      {/* ======================================================== */}
 
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-lg font-bold text-white">
-                S
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-600 text-lg font-bold text-white">
+              S
+            </div>
 
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">
-                  Singhagiri
-                </h1>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">
+                Singhagiri
+              </h1>
 
-                <p className="text-xs text-gray-500">
-                  Spin &amp; Win Admin
-                </p>
-              </div>
+              <p className="text-xs text-gray-500">
+                Spin &amp; Win Admin
+              </p>
             </div>
           </div>
 
@@ -506,7 +589,7 @@ export default function AdminPage() {
 
             <button
               onClick={handleLogout}
-              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
             >
               Logout
             </button>
@@ -514,12 +597,12 @@ export default function AdminPage() {
         </div>
       </header>
 
-      {/* ========================================================= */}
+      {/* ======================================================== */}
       {/* MAIN */}
-      {/* ========================================================= */}
+      {/* ======================================================== */}
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Page Heading */}
+        {/* PAGE TITLE */}
 
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900">
@@ -531,9 +614,9 @@ export default function AdminPage() {
           </p>
         </div>
 
-        {/* ========================================================= */}
-        {/* QUICK STATS */}
-        {/* ========================================================= */}
+        {/* ====================================================== */}
+        {/* STATS */}
+        {/* ====================================================== */}
 
         <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -558,7 +641,7 @@ export default function AdminPage() {
 
           <div className="rounded-xl border bg-white p-5 shadow-sm">
             <p className="text-sm text-gray-500">
-              Recent Spins
+              Total Spins Loaded
             </p>
 
             <p className="mt-2 text-3xl font-bold text-red-600">
@@ -567,9 +650,9 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* ========================================================= */}
+        {/* ====================================================== */}
         {/* PRIZE MANAGEMENT */}
-        {/* ========================================================= */}
+        {/* ====================================================== */}
 
         <section className="mb-10 rounded-xl border bg-white shadow-sm">
           <div className="flex flex-col gap-4 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -585,20 +668,22 @@ export default function AdminPage() {
 
             <button
               onClick={openAddPrizeForm}
-              className="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+              className="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700"
             >
               + Add Prize
             </button>
           </div>
 
-          {/* Prize Form */}
+          {/* PRIZE FORM */}
 
           {showPrizeForm && (
             <div className="border-b bg-gray-50 px-5 py-6">
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <h4 className="font-semibold text-gray-900">
-                    {editingPrizeId ? "Edit Prize" : "Add New Prize"}
+                    {editingPrizeId
+                      ? "Edit Prize"
+                      : "Add New Prize"}
                   </h4>
 
                   <p className="text-sm text-gray-500">
@@ -615,8 +700,6 @@ export default function AdminPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                {/* Name */}
-
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700">
                     Prize Name
@@ -635,8 +718,6 @@ export default function AdminPage() {
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
                   />
                 </div>
-
-                {/* Description */}
 
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700">
@@ -657,8 +738,6 @@ export default function AdminPage() {
                   />
                 </div>
 
-                {/* Weight */}
-
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700">
                     Winning Weight
@@ -675,7 +754,6 @@ export default function AdminPage() {
                         weight: e.target.value,
                       })
                     }
-                    placeholder="1"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
                   />
 
@@ -683,8 +761,6 @@ export default function AdminPage() {
                     Higher weight = higher chance of winning.
                   </p>
                 </div>
-
-                {/* Coupon Prefix */}
 
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700">
@@ -698,15 +774,14 @@ export default function AdminPage() {
                     onChange={(e) =>
                       setPrizeForm({
                         ...prizeForm,
-                        coupon_prefix: e.target.value.toUpperCase(),
+                        coupon_prefix:
+                          e.target.value.toUpperCase(),
                       })
                     }
                     placeholder="e.g. SG1000"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm uppercase outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
                   />
                 </div>
-
-                {/* Sort Order */}
 
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700">
@@ -725,8 +800,6 @@ export default function AdminPage() {
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
                   />
                 </div>
-
-                {/* Active */}
 
                 <div className="flex items-center">
                   <label className="flex cursor-pointer items-center gap-3">
@@ -772,7 +845,7 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* Prize Table */}
+          {/* PRIZE TABLE */}
 
           <div className="overflow-x-auto">
             {loadingPrizes ? (
@@ -786,7 +859,8 @@ export default function AdminPage() {
                 </p>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Add your first prize to start configuring the wheel.
+                  Add your first prize to start configuring the
+                  wheel.
                 </p>
               </div>
             ) : (
@@ -821,19 +895,20 @@ export default function AdminPage() {
 
                 <tbody className="divide-y divide-gray-200 bg-white">
                   {prizes.map((prize) => (
-                    <tr key={prize.id} className="hover:bg-gray-50">
+                    <tr
+                      key={prize.id}
+                      className="hover:bg-gray-50"
+                    >
                       <td className="px-5 py-4">
-                        <div>
-                          <p className="font-medium text-gray-900">
-                            {prize.name}
-                          </p>
+                        <p className="font-medium text-gray-900">
+                          {prize.name}
+                        </p>
 
-                          {prize.description && (
-                            <p className="mt-0.5 text-xs text-gray-500">
-                              {prize.description}
-                            </p>
-                          )}
-                        </div>
+                        {prize.description && (
+                          <p className="mt-0.5 text-xs text-gray-500">
+                            {prize.description}
+                          </p>
+                        )}
                       </td>
 
                       <td className="px-5 py-4 text-sm text-gray-700">
@@ -858,28 +933,38 @@ export default function AdminPage() {
                               : "bg-gray-100 text-gray-600"
                           }`}
                         >
-                          {prize.active ? "Active" : "Inactive"}
+                          {prize.active
+                            ? "Active"
+                            : "Inactive"}
                         </span>
                       </td>
 
                       <td className="px-5 py-4">
                         <div className="flex justify-end gap-2">
                           <button
-                            onClick={() => togglePrize(prize)}
+                            onClick={() =>
+                              togglePrize(prize)
+                            }
                             className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
                           >
-                            {prize.active ? "Deactivate" : "Activate"}
+                            {prize.active
+                              ? "Deactivate"
+                              : "Activate"}
                           </button>
 
                           <button
-                            onClick={() => openEditPrizeForm(prize)}
+                            onClick={() =>
+                              openEditPrizeForm(prize)
+                            }
                             className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
                           >
                             Edit
                           </button>
 
                           <button
-                            onClick={() => deletePrize(prize)}
+                            onClick={() =>
+                              deletePrize(prize)
+                            }
                             className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
                           >
                             Delete
@@ -894,13 +979,11 @@ export default function AdminPage() {
           </div>
         </section>
 
-        {/* ========================================================= */}
-        {/* STAGE 3B - SPIN / WINNER HISTORY */}
-        {/* ========================================================= */}
+        {/* ====================================================== */}
+        {/* STAGE 3B - SPIN HISTORY */}
+        {/* ====================================================== */}
 
         <section className="rounded-xl border bg-white shadow-sm">
-          {/* History Header */}
-
           <div className="flex flex-col gap-4 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="flex items-center gap-3">
@@ -914,14 +997,14 @@ export default function AdminPage() {
               </div>
 
               <p className="mt-1 text-sm text-gray-500">
-                View recent customer spins, prizes and generated coupons.
+                Latest 100 customer spins and generated coupons.
               </p>
             </div>
 
             <button
               onClick={() => loadHistory(true)}
               disabled={refreshingHistory}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span
                 className={
@@ -931,30 +1014,30 @@ export default function AdminPage() {
                 ↻
               </span>
 
-              {refreshingHistory ? "Refreshing..." : "Refresh"}
+              {refreshingHistory
+                ? "Refreshing..."
+                : "Refresh"}
             </button>
           </div>
 
-          {/* Error */}
+          {/* ERROR */}
 
           {historyError && (
             <div className="border-b bg-red-50 px-5 py-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm font-medium text-red-700">
-                  {historyError}
-                </p>
+              <p className="text-sm font-medium text-red-700">
+                {historyError}
+              </p>
 
-                <button
-                  onClick={() => loadHistory(true)}
-                  className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
-                >
-                  Try Again
-                </button>
-              </div>
+              <button
+                onClick={() => loadHistory(true)}
+                className="mt-3 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+              >
+                Try Again
+              </button>
             </div>
           )}
 
-          {/* History Table */}
+          {/* HISTORY TABLE */}
 
           <div className="overflow-x-auto">
             {loadingHistory ? (
@@ -972,12 +1055,12 @@ export default function AdminPage() {
                 </div>
 
                 <p className="mt-4 font-semibold text-gray-900">
-                  No spins yet
+                  No spins found
                 </p>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Customer spin activity will appear here once users start
-                  playing.
+                  Spin records will appear here after customers
+                  use the wheel.
                 </p>
               </div>
             ) : (
@@ -1007,94 +1090,81 @@ export default function AdminPage() {
                 </thead>
 
                 <tbody className="divide-y divide-gray-200 bg-white">
-                  {history.map((spin) => {
-                    const coupon = getCoupon(spin.coupons);
+                  {history.map((spin) => (
+                    <tr
+                      key={spin.id}
+                      className="hover:bg-gray-50"
+                    >
+                      <td className="whitespace-nowrap px-5 py-4">
+                        <span className="text-sm text-gray-700">
+                          {formatDateTime(
+                            spin.created_at
+                          )}
+                        </span>
+                      </td>
 
-                    return (
-                      <tr
-                        key={spin.id}
-                        className="transition hover:bg-gray-50"
-                      >
-                        {/* Date */}
+                      <td className="whitespace-nowrap px-5 py-4">
+                        <span className="font-mono text-sm text-gray-700">
+                          {maskMobile(spin.mobile)}
+                        </span>
+                      </td>
 
-                        <td className="whitespace-nowrap px-5 py-4">
-                          <p className="text-sm font-medium text-gray-900">
-                            {formatDateTime(spin.created_at)}
-                          </p>
-                        </td>
+                      <td className="px-5 py-4">
+                        <span className="text-sm font-semibold text-gray-900">
+                          {spin.prize_name}
+                        </span>
+                      </td>
 
-                        {/* Mobile */}
-
-                        <td className="whitespace-nowrap px-5 py-4">
-                          <span className="font-mono text-sm text-gray-700">
-                            {maskMobile(spin.mobile)}
+                      <td className="whitespace-nowrap px-5 py-4">
+                        {spin.coupon_code !== "—" ? (
+                          <span className="rounded-md bg-gray-100 px-2.5 py-1.5 font-mono text-xs font-semibold text-gray-800">
+                            {spin.coupon_code}
                           </span>
-                        </td>
+                        ) : (
+                          <span className="text-sm text-gray-400">
+                            —
+                          </span>
+                        )}
+                      </td>
 
-                        {/* Prize */}
-
-                        <td className="px-5 py-4">
-                          <p className="text-sm font-semibold text-gray-900">
-                            {getPrizeName(spin.prizes)}
-                          </p>
-                        </td>
-
-                        {/* Coupon */}
-
-                        <td className="whitespace-nowrap px-5 py-4">
-                          {coupon?.code ? (
-                            <span className="rounded-md bg-gray-100 px-2.5 py-1.5 font-mono text-xs font-semibold text-gray-800">
-                              {coupon.code}
-                            </span>
-                          ) : (
-                            <span className="text-sm text-gray-400">
-                              —
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Status */}
-
-                        <td className="whitespace-nowrap px-5 py-4">
-                          {coupon?.status ? (
-                            <span
-                              className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${getCouponStatusClass(
-                                coupon.status
-                              )}`}
-                            >
-                              {coupon.status}
-                            </span>
-                          ) : (
-                            <span className="text-sm text-gray-400">
-                              —
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                      <td className="whitespace-nowrap px-5 py-4">
+                        {spin.coupon_status !== "—" ? (
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${getCouponStatusClass(
+                              spin.coupon_status
+                            )}`}
+                          >
+                            {spin.coupon_status}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-gray-400">
+                            —
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             )}
           </div>
 
-          {/* History Footer */}
+          {/* FOOTER */}
 
           {!loadingHistory && history.length > 0 && (
             <div className="border-t bg-gray-50 px-5 py-4">
               <p className="text-xs text-gray-500">
                 Showing the latest {history.length} spin
-                {history.length === 1 ? "" : "s"}. Search and filtering
-                will be added in Stage 3C.
+                {history.length === 1 ? "" : "s"}.
               </p>
             </div>
           )}
         </section>
       </main>
 
-      {/* ========================================================= */}
+      {/* ======================================================== */}
       {/* FOOTER */}
-      {/* ========================================================= */}
+      {/* ======================================================== */}
 
       <footer className="border-t bg-white">
         <div className="mx-auto max-w-7xl px-4 py-5 text-center text-xs text-gray-400 sm:px-6 lg:px-8">
