@@ -291,6 +291,39 @@ export default function AdminDashboard() {
     router.replace("/admin/login");
   }
 
+  /*
+   * ============================================================
+   * STAGE 3A - ADMIN OVERVIEW CALCULATIONS
+   * ============================================================
+   */
+
+  const totalPrizes = prizes.length;
+
+  const activePrizes = prizes.filter(
+    (prize) => prize.active
+  ).length;
+
+  const inactivePrizes = prizes.filter(
+    (prize) => !prize.active
+  ).length;
+
+  const totalWinningWeight = prizes.reduce(
+    (total, prize) => total + Number(prize.weight || 0),
+    0
+  );
+
+  /*
+   * Only active prizes participate in the wheel.
+   * This calculation is useful for the administrator
+   * to understand the currently active configuration.
+   */
+  const activeWinningWeight = prizes
+    .filter((prize) => prize.active)
+    .reduce(
+      (total, prize) => total + Number(prize.weight || 0),
+      0
+    );
+
   if (checking) {
     return (
       <main className="loading">
@@ -349,9 +382,7 @@ export default function AdminDashboard() {
         <div className="header-right">
           <span className="admin-email">{email}</span>
 
-          <button onClick={logout}>
-            Logout
-          </button>
+          <button onClick={logout}>Logout</button>
         </div>
       </header>
 
@@ -389,6 +420,125 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* =====================================================
+            STAGE 3A - ADMIN OVERVIEW
+        ====================================================== */}
+
+        <div className="overview-header">
+          <div>
+            <div className="eyebrow">
+              CAMPAIGN OVERVIEW
+            </div>
+
+            <h2>Prize Overview</h2>
+
+            <p>
+              Quick summary of your current Spin & Win configuration.
+            </p>
+          </div>
+        </div>
+
+        <div className="overview-grid">
+          <div className="overview-card">
+            <div className="overview-icon">
+              🎁
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                TOTAL PRIZES
+              </div>
+
+              <div className="overview-value">
+                {totalPrizes}
+              </div>
+
+              <div className="overview-description">
+                All configured prizes
+              </div>
+            </div>
+          </div>
+
+          <div className="overview-card">
+            <div className="overview-icon active-icon">
+              ✓
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                ACTIVE PRIZES
+              </div>
+
+              <div className="overview-value">
+                {activePrizes}
+              </div>
+
+              <div className="overview-description">
+                Currently available on wheel
+              </div>
+            </div>
+          </div>
+
+          <div className="overview-card">
+            <div className="overview-icon inactive-icon">
+              ○
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                INACTIVE PRIZES
+              </div>
+
+              <div className="overview-value">
+                {inactivePrizes}
+              </div>
+
+              <div className="overview-description">
+                Currently disabled
+              </div>
+            </div>
+          </div>
+
+          <div className="overview-card">
+            <div className="overview-icon weight-icon">
+              %
+            </div>
+
+            <div className="overview-content">
+              <div className="overview-label">
+                ACTIVE WEIGHT
+              </div>
+
+              <div className="overview-value">
+                {activeWinningWeight}
+              </div>
+
+              <div className="overview-description">
+                Total active winning weight
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="weight-info">
+          <div className="weight-info-icon">
+            ℹ
+          </div>
+
+          <div>
+            <strong>Winning probability</strong>
+
+            <p>
+              Each active prize's probability is calculated from
+              its weight relative to the total active weight.
+            </p>
+          </div>
+        </div>
+
+        {/* =====================================================
+            PRIZE MANAGEMENT
+        ====================================================== */}
+
         <div className="section-header">
           <div>
             <h2>Prize Management</h2>
@@ -399,7 +549,8 @@ export default function AdminDashboard() {
           </div>
 
           <div className="prize-count">
-            {prizes.length} prize{prizes.length !== 1 ? "s" : ""}
+            {prizes.length} prize
+            {prizes.length !== 1 ? "s" : ""}
           </div>
         </div>
 
@@ -500,7 +651,9 @@ export default function AdminDashboard() {
 
                           <button
                             className="delete-button"
-                            disabled={deleting === prize.id}
+                            disabled={
+                              deleting === prize.id
+                            }
                             onClick={() =>
                               deletePrize(prize)
                             }
@@ -866,6 +1019,135 @@ export default function AdminDashboard() {
           border: 1px solid #f4cccc;
         }
 
+        /* =====================================================
+           STAGE 3A - OVERVIEW
+        ====================================================== */
+
+        .overview-header {
+          margin-top: 35px;
+          margin-bottom: 16px;
+        }
+
+        .overview-header h2 {
+          margin: 6px 0 4px;
+          font-size: 21px;
+        }
+
+        .overview-header p {
+          margin: 0;
+          color: #888;
+          font-size: 13px;
+        }
+
+        .overview-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 15px;
+        }
+
+        .overview-card {
+          min-height: 125px;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 20px;
+          box-sizing: border-box;
+          border-radius: 15px;
+          background: white;
+          border: 1px solid #eeeeee;
+          box-shadow: 0 6px 25px rgba(0, 0, 0, 0.04);
+        }
+
+        .overview-icon {
+          width: 48px;
+          height: 48px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 12px;
+          background: #fff1f1;
+          color: #e31b23;
+          font-size: 22px;
+          font-weight: 900;
+        }
+
+        .active-icon {
+          background: #edf9f0;
+          color: #24733b;
+        }
+
+        .inactive-icon {
+          background: #f1f1f1;
+          color: #888;
+        }
+
+        .weight-icon {
+          background: #f5f5f5;
+          color: #333;
+        }
+
+        .overview-label {
+          color: #999;
+          font-size: 9px;
+          font-weight: 900;
+          letter-spacing: 1px;
+        }
+
+        .overview-value {
+          margin-top: 4px;
+          color: #222;
+          font-size: 28px;
+          line-height: 1;
+          font-weight: 950;
+        }
+
+        .overview-description {
+          margin-top: 7px;
+          color: #999;
+          font-size: 10px;
+        }
+
+        .weight-info {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          margin-top: 15px;
+          padding: 12px 15px;
+          border: 1px solid #e8e8e8;
+          border-radius: 10px;
+          background: white;
+        }
+
+        .weight-info-icon {
+          width: 20px;
+          height: 20px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          background: #f0f0f0;
+          color: #777;
+          font-size: 11px;
+          font-weight: 900;
+        }
+
+        .weight-info strong {
+          color: #555;
+          font-size: 11px;
+        }
+
+        .weight-info p {
+          margin: 3px 0 0;
+          color: #999;
+          font-size: 10px;
+        }
+
+        /* =====================================================
+           PRIZE MANAGEMENT
+        ====================================================== */
+
         .section-header {
           display: flex;
           align-items: center;
@@ -1070,7 +1352,9 @@ export default function AdminDashboard() {
           cursor: pointer;
         }
 
-        /* MODAL */
+        /* =====================================================
+           MODAL
+        ====================================================== */
 
         .modal-overlay {
           position: fixed;
@@ -1261,6 +1545,16 @@ export default function AdminDashboard() {
           cursor: not-allowed;
         }
 
+        /* =====================================================
+           MOBILE
+        ====================================================== */
+
+        @media (max-width: 950px) {
+          .overview-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+
         @media (max-width: 650px) {
           .admin-header {
             padding: 12px 15px;
@@ -1285,6 +1579,14 @@ export default function AdminDashboard() {
 
           .add-button {
             width: 100%;
+          }
+
+          .overview-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .overview-card {
+            min-height: 105px;
           }
 
           .section-header {
