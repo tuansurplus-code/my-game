@@ -10,7 +10,7 @@
   "dependencies": {
     "@Supabase/ssr": "latest",
     "@Supabase/supabase-js": "latest",
-    "jspdf": "4.0.0",
+    "jspdf": "3.0.4",
     "jspdf-autotable": "5.0.2",
     "next": "latest",
     "react": "latest",
