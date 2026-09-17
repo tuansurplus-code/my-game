@@ -87,7 +87,7 @@ export default function WheelAppearancePage() {
       pointer_color: settings.pointer_color,
       center_color: settings.center_color,
       text_color: settings.text_color,
-      logo_url: settings.logo_url.trim() || null,
+      logo_url: settings.logo_url?.trim() || null,
       font_family: settings.font_family,
       animation_duration: duration,
       updated_at: new Date().toISOString(),
@@ -200,10 +200,21 @@ export default function WheelAppearancePage() {
   );
 }
 
-function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void; }) {
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
     <div className="color-row">
-      <label>{label}<input value={value} onChange={(e) => onChange(e.target.value)} maxLength={20} placeholder="#ffffff" /></label>
+      <label>
+        {label}
+        <input value={value} onChange={(e) => onChange(e.target.value)} maxLength={20} placeholder="#ffffff" />
+      </label>
       <input className="color-picker" type="color" value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : "#ffffff"} onChange={(e) => onChange(e.target.value)} aria-label={`${label} color picker`} />
     </div>
   );
