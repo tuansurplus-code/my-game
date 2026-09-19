@@ -43,12 +43,44 @@ export default function WheelAppearancePage() {
   useEffect(() => { checkAdmin(); }, []);
 
   async function checkAdmin() {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user) { router.replace("/admin/login"); return; }
-    const { data: admin, error: adminError } = await supabase.from("admin_users").select("user_id").eq("user_id", session.user.id).maybeSingle();
-    if (adminError || !admin) { await supabase.auth.signOut(); router.replace("/admin/login"); return; }
-    setChecking(false);
-    await Promise.all([loadSettings(), loadPrizes()]);
+    try {
+      const withTimeout = <T,>(promise: PromiseLike<T>, timeoutMs = 10000): Promise<T> =>
+        Promise.race([
+          Promise.resolve(promise),
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error("Admin access check timed out.")), timeoutMs)
+          ),
+        ]);
+
+      const {
+        data: { session },
+      } = await withTimeout(supabase.auth.getSession());
+
+      if (!session?.user) {
+        router.replace("/admin/login");
+        return;
+      }
+
+      const { data: admin, error: adminError } = await withTimeout(
+        supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", session.user.id)
+          .maybeSingle()
+      );
+
+      if (adminError || !admin) {
+        await supabase.auth.signOut();
+        router.replace("/admin/login");
+        return;
+      }
+
+      setChecking(false);
+      await Promise.all([loadSettings(), loadPrizes()]);
+    } catch (error) {
+      console.error("Admin access check failed:", error);
+      router.replace("/admin/login");
+    }
   }
 
   async function loadSettings() {
