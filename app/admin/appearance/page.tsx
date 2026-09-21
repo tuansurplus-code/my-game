@@ -641,7 +641,7 @@ export default function WheelAppearancePage() {
         .section-head h2 { margin:4px 0 0; font-size:18px; line-height:1.2; font-weight:850; color:#0f172a; }
         .section-head p { margin:5px 0 0; color:#64748b; font-size:11px; }
         .settings-section { margin-bottom:23px; }
-        .settings-section > h3 {
+        .segment-section-title { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }\n        .segment-section-title h3 { margin:0; }\n        .settings-section > h3 {
           margin:0 0 10px; color:#334155; font-size:11px; font-weight:900;
         }
         .settings-box {
@@ -696,9 +696,9 @@ export default function WheelAppearancePage() {
           padding:7px 9px; font-size:9px; font-weight:800; cursor:pointer;
         }
         .empty-state { padding:25px; text-align:center; border:1px dashed #cbd5e1; border-radius:9px; color:#94a3b8; font-size:10px; }
-        .range-wrap { display:flex; align-items:center; gap:13px; }
+        .animation-box { background:#f8fafc; }\n        .animation-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }\n        .animation-header span { color:#475569; font-size:9px; font-weight:900; letter-spacing:.06em; }\n        .animation-header strong { color:#dc2626; font-size:14px; font-weight:950; font-family:monospace; }\n        .range-wrap { display:flex; align-items:center; gap:13px; }
         .range-wrap input[type="range"] { flex:1; accent-color:#dc2626; }
-        .range-value { min-width:65px; padding:9px 8px; text-align:center; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#0f172a; font-size:10px; font-weight:900; }
+        .range-labels { display:flex; justify-content:space-between; margin-top:7px; color:#94a3b8; font-size:8px; font-weight:700; }\n        .sound-row { margin-top:18px; padding:12px; display:flex; align-items:center; justify-content:space-between; gap:12px; background:#fff; border:1px solid #e2e8f0; border-radius:9px; }\n        .sound-row strong { display:block; color:#334155; font-size:10px; }\n        .sound-row p { margin:3px 0 0; color:#94a3b8; font-size:8px; }\n        .toggle-placeholder { border-radius:999px; padding:5px 8px; background:#ecfdf5; color:#047857; font-size:8px; font-weight:900; }\n        .range-value { min-width:65px; padding:9px 8px; text-align:center; border:1px solid #cbd5e1; border-radius:7px; background:#fff; color:#0f172a; font-size:10px; font-weight:900; }
         .form-footer {
           display:flex; align-items:center; justify-content:space-between; gap:12px;
           margin-top:30px; padding-top:20px; border-top:1px solid #e2e8f0;
