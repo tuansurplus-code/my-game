@@ -126,7 +126,7 @@ export default function WheelAppearancePage() {
                 <path d="M336.9 128.9 A165 165 0 0 1 277.1 313.4 L180 180 Z" fill="#d6a619"/>
                 <path d="M277.1 313.4 A165 165 0 0 1 82.9 313.4 L180 180 Z" fill="#20c978"/>
                 <path d="M82.9 313.4 A165 165 0 0 1 23.1 128.9 L180 180 Z" fill="#8e2de2"/>
-                <path d="M23.1 128.9 A165 165 0 0 1 180 15 L180 180 Z" fill="#ed1c24"/>
+                <path d="M23.1 128.9 A165 165 0 0 1 180 15 L180 180 Z" fill="#8e2de2"/>
                 <line x1="180" y1="180" x2="180" y2="15" stroke="#fff" strokeWidth="4"/>
                 <line x1="180" y1="180" x2="336.9" y2="128.9" stroke="#fff" strokeWidth="4"/>
                 <line x1="180" y1="180" x2="277.1" y2="313.4" stroke="#fff" strokeWidth="4"/>
