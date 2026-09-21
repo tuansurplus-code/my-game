@@ -72,7 +72,7 @@ export default function WheelAppearancePage() {
 
   if(checking)return <main className="loading">Checking admin access...</main>;
 
-  return <div className="page">
+  return <div className="page"><PageStyle/>
     <header className="topbar">
       <div className="topbar-brand"><div className="mark">S</div><div><div className="brand-red">SINGHAGIRI</div><div className="admin-title">SPIN & WIN ADMIN</div></div></div>
       <div className="top-actions"><button onClick={()=>router.push("/admin")}>▦ <span>Dashboard</span></button><button className="logout" onClick={logout}>↪ <span>Logout</span></button></div>
