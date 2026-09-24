@@ -55,6 +55,10 @@ export default function WheelAppearancePage() {
   const update=<K extends keyof Settings>(key:K,value:Settings[K])=>setSettings(s=>({...s,[key]:value}));
   const activePrizes=prizes.filter(p=>p.active);
   const color=(p:Prize,i:number)=>settings.segment_colors[p.id]||palette[i%palette.length];
+  const previewSegments=activePrizes.map((p,i)=>color(p,i));
+  const previewGradient=previewSegments.length
+    ? `conic-gradient(${previewSegments.map((c,i)=>`${c} ${(i*100)/previewSegments.length}% ${((i+1)*100)/previewSegments.length}%`).join(", ")})`
+    : "#eeeeee";
 
   async function save(e:FormEvent){
     e.preventDefault(); setSaving(true); setMessage(""); setError("");
