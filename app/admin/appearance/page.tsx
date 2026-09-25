@@ -19,7 +19,7 @@ const defaults: Settings = {
   page_background_color: "#9dbbe1", button_color: "#321be4", button_text_color: "#ffffff",
   pointer_color: "#050505", center_color: "#1e1be4", text_color: "#ffffff",
   logo_url: "https://www.singhagiri.lk/assets/images/logo.png", font_family: "Inter, sans-serif",
-  animation_duration: 6, header_text: "SINGHAGIRI", online_text: "SINGHAGIRI ONLINE", segment_colors: {}
+  animation_duration: 6, header_text: "PROMO GAME", online_text: "PROMO GAME ONLINE", segment_colors: {}
 };
 const palette = ["#AF181D","#D6B24C","#1B6AA7","#1F8E59","#7A34BC","#E36C19","#008B8B","#D63384"];
 
@@ -78,7 +78,7 @@ export default function WheelAppearancePage() {
 
   return <div className="page"><PageStyle/>
     <header className="topbar">
-      <div className="topbar-brand"><div className="mark">S</div><div><div className="brand-red">SINGHAGIRI</div><div className="admin-title">SPIN & WIN ADMIN</div></div></div>
+      <div className="topbar-brand"><div className="mark">S</div><div><div className="brand-red">PROMO GAME</div><div className="admin-title">SPIN & WIN ADMIN</div></div></div>
       <div className="top-actions"><button onClick={()=>router.push("/admin")}>▦ <span>Dashboard</span></button><button className="logout" onClick={logout}>↪ <span>Logout</span></button></div>
     </header>
 
