@@ -460,7 +460,7 @@ export default function AdminDashboard() {
       const generatedAt = new Date().toLocaleString("en-LK", { dateStyle: "medium", timeStyle: "short" });
       doc.setFontSize(20);
       doc.setFont("helvetica", "bold");
-      doc.text("SINGHAGIRI", 14, 18);
+      doc.text("PROMO GAME", 14, 18);
       doc.setFontSize(12);
       doc.setFont("helvetica", "normal");
       doc.text("SPIN & WIN - WINNER HISTORY REPORT", 14, 26);
@@ -524,13 +524,13 @@ export default function AdminDashboard() {
   return (
     <main className="admin-page">
       <header className="admin-header">
-        <div className="header-brand"><div className="header-mark">S</div><div><div className="header-name">SINGHAGIRI</div><div className="header-subtitle">SPIN & WIN ADMIN</div></div></div>
+        <div className="header-brand"><div className="header-mark">S</div><div><div className="header-name">PROMO GAME</div><div className="header-subtitle">SPIN & WIN ADMIN</div></div></div>
         <div className="header-right"><span className="admin-email">{email}</span><button onClick={logout}>Logout</button></div>
       </header>
 
       <div className="admin-layout">
         <aside className={`sidebar ${mobileSidebarOpen ? "sidebar-open" : ""}`}>
-          <div className="sidebar-brand"><div className="sidebar-mark">S</div><div><div className="sidebar-name">SINGHAGIRI</div><div className="sidebar-subtitle">SPIN & WIN</div></div></div>
+          <div className="sidebar-brand"><div className="sidebar-mark">S</div><div><div className="sidebar-name">PROMO GAME</div><div className="sidebar-subtitle">SPIN & WIN</div></div></div>
           <div className="sidebar-divider" />
           <div className="sidebar-label">CAMPAIGN</div>
           <nav className="sidebar-nav">
@@ -551,7 +551,7 @@ export default function AdminDashboard() {
         {mobileSidebarOpen && <div className="sidebar-overlay" onClick={() => setMobileSidebarOpen(false)} />}
 
         <section className="admin-content">
-          <div className="mobile-toolbar"><button className="mobile-menu-button" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}>☰</button><div><div className="mobile-toolbar-title">SINGHAGIRI</div><div className="mobile-toolbar-subtitle">SPIN & WIN ADMIN</div></div></div>
+          <div className="mobile-toolbar"><button className="mobile-menu-button" onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}>☰</button><div><div className="mobile-toolbar-title">PROMO GAME</div><div className="mobile-toolbar-subtitle">SPIN & WIN ADMIN</div></div></div>
 
           {activeTab === "overview" && (
             <>
