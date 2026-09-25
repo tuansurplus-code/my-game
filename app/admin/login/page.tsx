@@ -188,7 +188,7 @@ export default function AdminLogin() {
           </div>
 
           <div className="brand-name">
-            SINGHAGIRI
+            PROMO GAME
           </div>
 
           <div className="brand-subtitle">
